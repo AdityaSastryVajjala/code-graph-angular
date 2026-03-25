@@ -1,0 +1,16 @@
+{
+  "defaultProject": "simple-ngmodule-app",
+  "projects": {
+    "simple-ngmodule-app": {
+      "projectType": "application",
+      "sourceRoot": "src",
+      "architect": {
+        "build": {
+          "options": {
+            "main": "src/main.ts"
+          }
+        }
+      }
+    }
+  }
+}

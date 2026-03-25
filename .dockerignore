@@ -1,0 +1,11 @@
+node_modules/
+dist/
+build/
+coverage/
+.git/
+*.log
+.env
+.env.*
+tests/fixtures/**/node_modules/
+docker/data/
+docker/logs/

@@ -137,3 +137,18 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# CodeGraph build output
+dist/
+build/
+
+# Test coverage
+coverage/
+
+# Neo4j Docker data volumes (local dev)
+docker/data/
+docker/logs/
+docker/plugins/
+
+# Fixture node_modules (fixtures are plain source, no install needed)
+tests/fixtures/**/node_modules/
