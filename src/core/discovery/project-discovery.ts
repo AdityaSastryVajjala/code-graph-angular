@@ -27,6 +27,15 @@ interface NxProjectJson {
   name?: string;
   projectType?: string;
   sourceRoot?: string;
+  tags?: string[];
+}
+
+export interface ProjectDiscovery {
+  name: string;
+  type: 'app' | 'lib';
+  sourceRoot: string;
+  tags: string[];
+  configFile: string;
 }
 
 /**
@@ -58,6 +67,73 @@ export function discoverApp(rootPath: string): AngularApp {
   }
 
   return buildAngularApp(appName, absRoot, project);
+}
+
+/**
+ * Discover all projects (apps and libraries) from a workspace.
+ * Reads angular.json for all entries, or nx.json + project.json files.
+ * Leaves existing discoverWorkspace() function unchanged.
+ */
+export function discoverAllProjects(workspaceRoot: string): ProjectDiscovery[] {
+  const absRoot = resolve(workspaceRoot);
+
+  // Try Nx workspace first (nx.json + project.json)
+  const nxJsonPath = join(absRoot, 'nx.json');
+  if (existsSync(nxJsonPath)) {
+    return discoverAllNxProjects(absRoot);
+  }
+
+  // Fall back to angular.json
+  const angularJsonPath = join(absRoot, 'angular.json');
+  if (existsSync(angularJsonPath)) {
+    return discoverAllAngularProjects(absRoot);
+  }
+
+  return [];
+}
+
+function discoverAllAngularProjects(rootPath: string): ProjectDiscovery[] {
+  const angularJsonPath = join(rootPath, 'angular.json');
+  const angularJson: AngularJson = JSON.parse(readFileSync(angularJsonPath, 'utf-8'));
+  const projects = angularJson.projects ?? {};
+
+  return Object.entries(projects).map(([name, project]) => ({
+    name,
+    type: project.projectType === 'library' ? 'lib' : 'app',
+    sourceRoot: project.sourceRoot ?? 'src',
+    tags: [],
+    configFile: angularJsonPath,
+  }));
+}
+
+function discoverAllNxProjects(rootPath: string): ProjectDiscovery[] {
+  const { readdirSync, statSync } = require('fs') as typeof import('fs');
+  const results: ProjectDiscovery[] = [];
+
+  const scanDir = (dir: string): void => {
+    if (!existsSync(dir)) return;
+    for (const entry of readdirSync(dir)) {
+      const entryPath = join(dir, entry);
+      if (!statSync(entryPath).isDirectory()) continue;
+      const projectJsonPath = join(entryPath, 'project.json');
+      if (existsSync(projectJsonPath)) {
+        const projectJson: NxProjectJson = JSON.parse(readFileSync(projectJsonPath, 'utf-8'));
+        const name = projectJson.name ?? entry;
+        const type: 'app' | 'lib' = projectJson.projectType === 'library' ? 'lib' : 'app';
+        results.push({
+          name,
+          type,
+          sourceRoot: projectJson.sourceRoot ?? 'src',
+          tags: projectJson.tags ?? [],
+          configFile: projectJsonPath,
+        });
+      }
+    }
+  };
+
+  scanDir(join(rootPath, 'apps'));
+  scanDir(join(rootPath, 'libs'));
+  return results;
 }
 
 /**

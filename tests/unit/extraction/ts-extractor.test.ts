@@ -8,7 +8,6 @@ import { extractTsFile } from '../../../src/core/extraction/ts-extractor.js';
 import { NodeLabel, RelationshipType } from '../../../src/core/types/graph-ir.js';
 
 const FIXTURE_ROOT = resolve(__dirname, '../../fixtures/simple-ngmodule-app');
-const APP_DIR = resolve(FIXTURE_ROOT, 'src/app');
 
 function readFixture(relPath: string): string {
   return readFileSync(resolve(FIXTURE_ROOT, relPath), 'utf-8');

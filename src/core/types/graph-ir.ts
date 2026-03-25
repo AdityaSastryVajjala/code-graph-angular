@@ -20,6 +20,15 @@ export enum NodeLabel {
   SpecFile = 'SpecFile',
   ExternalComponent = 'ExternalComponent',
   IndexMeta = '_IndexMeta',
+  // Phase 2 — semantic symbols
+  Class = 'Class',
+  Interface = 'Interface',
+  Method = 'Method',
+  Property = 'Property',
+  Template = 'Template',
+  InjectionToken = 'InjectionToken',
+  // Phase 3 — workspace
+  Project = 'Project',
 }
 
 // ─── Relationship Types ──────────────────────────────────────────────────────
@@ -57,6 +66,28 @@ export enum RelationshipType {
 
   // External / third-party usage
   UsesExternal = 'USES_EXTERNAL',
+
+  // Phase 2 — semantic relationships
+  // Use DECLARES_SYMBOL for File→Class/Interface to avoid collision with NgModule DECLARES
+  DeclaresSymbol = 'DECLARES_SYMBOL',
+  HasMethod = 'HAS_METHOD',
+  HasProperty = 'HAS_PROPERTY',
+  Implements = 'IMPLEMENTS',
+  Extends = 'EXTENDS',
+  UsesTemplate = 'USES_TEMPLATE',
+  BindsTo = 'BINDS_TO',
+  RoutesTo = 'ROUTES_TO',
+  LazyLoads = 'LAZY_LOADS',
+  // Phase 3 — workspace and template binding relationships
+  BelongsToProject = 'BELONGS_TO_PROJECT',
+  ProjectDependsOn = 'PROJECT_DEPENDS_ON',
+  TemplateBindsProperty = 'TEMPLATE_BINDS_PROPERTY',
+  TemplateBindsEvent = 'TEMPLATE_BINDS_EVENT',
+  TemplateTwoWayBinds = 'TEMPLATE_TWO_WAY_BINDS',
+  TemplateUsesDirective = 'TEMPLATE_USES_DIRECTIVE',
+  TemplateUsesPipe = 'TEMPLATE_USES_PIPE',
+  // Phase 3 — method call tracking
+  CallsMethod = 'CALLS_METHOD',
 }
 
 // ─── Core GraphIR Types ──────────────────────────────────────────────────────
@@ -144,3 +175,52 @@ export interface IncrementalStats {
 }
 
 export type IndexMetaStatus = 'indexing' | 'complete' | 'absent';
+
+// ─── Phase 3: Impact & Workspace Types ───────────────────────────────────────
+
+export type ImpactClass =
+  | 'direct'            // node directly depends on the changed file/symbol (1 hop)
+  | 'indirect'          // node transitively depends via strong edges (2+ hops)
+  | 'template-derived'  // dependency path passes through a Template node
+  | 'structural';       // dependency is via Extends/Implements only (no runtime reference)
+
+export interface ImpactResult {
+  nodeId: string;
+  nodeLabel: string;
+  nodeName: string;
+  filePath: string;
+  impactClass: ImpactClass;
+  depth: number;
+  edgeChain: string[];
+  isTestFile: boolean;
+  projectId: string | null;
+}
+
+export interface TraversalOptions {
+  maxDepth?: number;
+  edgeKinds?: string[];
+  projectId?: string;
+  includeTests?: boolean;
+  summaryMode?: boolean;
+}
+
+export interface ImpactSummary {
+  directCount: number;
+  indirectCount: number;
+  templateDerivedCount: number;
+  structuralCount: number;
+  totalCount: number;
+}
+
+export interface MetricSnapshot {
+  entityId: string;
+  entityLabel: string;
+  entityName: string;
+  inboundCount: number;
+  outboundCount: number;
+  injectionCount: number;
+  templateUsageCount: number;
+  selectorUsageCount: number;
+  projectDependencyCount: number;
+  projectConsumerCount: number;
+}

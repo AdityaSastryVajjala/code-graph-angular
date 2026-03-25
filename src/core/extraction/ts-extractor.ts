@@ -13,6 +13,9 @@ import {
   NodeLabel,
   RelationshipType,
 } from '../types/graph-ir.js';
+import { logger } from '../../shared/logger.js';
+import { extractDi } from './di-extractor.js';
+import { extractRoutes } from './route-extractor.js';
 
 // ─── ID Generation ────────────────────────────────────────────────────────────
 
@@ -25,6 +28,15 @@ export function makeNodeId(filePath: string, symbolName: string): string {
 
 export function makeFileId(filePath: string): string {
   return createHash('sha256').update(filePath).digest('hex').slice(0, 16);
+}
+
+/**
+ * Phase 2 — human-readable composite key for semantic symbol nodes.
+ * Format: filePath::Kind::qualifiedName
+ * Example: 'src/app/user.service.ts::Class::UserService'
+ */
+export function makeSemanticNodeId(filePath: string, kind: string, qualifiedName: string): string {
+  return `${filePath}::${kind}::${qualifiedName}`;
 }
 
 // ─── Main Extractor ───────────────────────────────────────────────────────────
@@ -40,7 +52,7 @@ export function extractTsFile(
   source: string,
   appRoot: string,
 ): GraphIR {
-  const relPath = relative(appRoot, absolutePath);
+  const relPath = relative(appRoot, absolutePath).replace(/\\/g, '/');
   const sourceFile = ts.createSourceFile(absolutePath, source, ts.ScriptTarget.ESNext, true);
 
   const nodes: GraphNode[] = [];
@@ -87,6 +99,18 @@ export function extractTsFile(
       }
     }
   });
+
+  // Phase 2 — extract semantic symbols (Class, Interface, Method, Property)
+  extractSemanticSymbols(sourceFile, relPath, fileId, nodes, relationships);
+
+  // Phase 2 — extract DI: InjectionToken nodes + @Inject() pattern INJECTS edges
+  const diIR = extractDi(absolutePath, source, appRoot);
+  nodes.push(...diIR.nodes);
+  relationships.push(...diIR.relationships);
+
+  // Phase 2 — extract routing: ROUTES_TO + LAZY_LOADS relationships
+  const routeIR = extractRoutes(absolutePath, source, appRoot);
+  relationships.push(...routeIR.relationships);
 
   return { nodes, relationships, sourceFile: relPath };
 }
@@ -265,6 +289,336 @@ function extractPipe(
     type: RelationshipType.BelongsToFile,
     fromId: nodeId,
     toId: fileId,
+  });
+}
+
+// ─── Phase 2: Semantic Symbol Extraction ─────────────────────────────────────
+
+/**
+ * Walk the source file and emit Class/Interface/Method/Property nodes plus
+ * DECLARES_SYMBOL, HAS_METHOD, HAS_PROPERTY, IMPLEMENTS, EXTENDS relationships.
+ */
+function extractSemanticSymbols(
+  sourceFile: ts.SourceFile,
+  relPath: string,
+  fileId: string,
+  nodes: GraphNode[],
+  rels: GraphRelationship[],
+): void {
+  ts.forEachChild(sourceFile, (node) => {
+    try {
+      if (ts.isClassDeclaration(node) && node.name) {
+        extractClassSymbol(node, relPath, fileId, nodes, rels);
+      } else if (ts.isInterfaceDeclaration(node) && node.name) {
+        extractInterfaceSymbol(node, relPath, fileId, nodes, rels);
+      }
+    } catch (err) {
+      logger.warn('semantic_extraction_error', {
+        filePath: relPath,
+        kind: ts.isClassDeclaration(node) ? 'Class' : 'Interface',
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+}
+
+function extractClassSymbol(
+  node: ts.ClassDeclaration,
+  relPath: string,
+  fileId: string,
+  nodes: GraphNode[],
+  rels: GraphRelationship[],
+): void {
+  const className = node.name!.text;
+  const classId = makeSemanticNodeId(relPath, 'Class', className);
+  const modifiers = ts.getModifiers(node) ?? [];
+  const isAbstract = modifiers.some((m) => m.kind === ts.SyntaxKind.AbstractKeyword);
+  const isExported = modifiers.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
+
+  nodes.push({
+    id: classId,
+    label: NodeLabel.Class,
+    properties: {
+      id: classId,
+      name: className,
+      sourceFile: relPath,
+      isAbstract,
+      isExported,
+    },
+  });
+
+  // DECLARES_SYMBOL: File → Class
+  rels.push({
+    id: `${fileId}->declares_symbol->${classId}`,
+    type: RelationshipType.DeclaresSymbol,
+    fromId: fileId,
+    toId: classId,
+  });
+
+  // EXTENDS heritage
+  if (node.heritageClauses) {
+    for (const clause of node.heritageClauses) {
+      if (clause.token === ts.SyntaxKind.ExtendsKeyword) {
+        for (const type of clause.types) {
+          try {
+            const baseName = ts.isIdentifier(type.expression) ? type.expression.text : null;
+            if (baseName) {
+              rels.push({
+                id: `${classId}->extends->${baseName}`,
+                type: RelationshipType.Extends,
+                fromId: classId,
+                toId: '',
+                pendingTargetName: baseName,
+              });
+            }
+          } catch {
+            logger.warn('heritage_extraction_error', { filePath: relPath, className, clause: 'extends' });
+          }
+        }
+      } else if (clause.token === ts.SyntaxKind.ImplementsKeyword) {
+        for (const type of clause.types) {
+          try {
+            const ifaceName = ts.isIdentifier(type.expression) ? type.expression.text : null;
+            if (ifaceName) {
+              rels.push({
+                id: `${classId}->implements->${ifaceName}`,
+                type: RelationshipType.Implements,
+                fromId: classId,
+                toId: '',
+                pendingTargetName: ifaceName,
+              });
+            }
+          } catch {
+            logger.warn('heritage_extraction_error', { filePath: relPath, className, clause: 'implements' });
+          }
+        }
+      }
+    }
+  }
+
+  // Members: Methods and Properties
+  for (const member of node.members) {
+    try {
+      if (ts.isMethodDeclaration(member) && member.name) {
+        extractMethodSymbol(member, className, classId, relPath, nodes, rels);
+      } else if (ts.isPropertyDeclaration(member) && member.name) {
+        extractPropertySymbol(member, className, classId, relPath, nodes, rels);
+      }
+    } catch (err) {
+      logger.warn('member_extraction_error', {
+        filePath: relPath,
+        className,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+}
+
+function extractInterfaceSymbol(
+  node: ts.InterfaceDeclaration,
+  relPath: string,
+  fileId: string,
+  nodes: GraphNode[],
+  rels: GraphRelationship[],
+): void {
+  const ifaceName = node.name.text;
+  const ifaceId = makeSemanticNodeId(relPath, 'Interface', ifaceName);
+  const modifiers = ts.getModifiers(node) ?? [];
+  const isExported = modifiers.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
+
+  nodes.push({
+    id: ifaceId,
+    label: NodeLabel.Interface,
+    properties: {
+      id: ifaceId,
+      name: ifaceName,
+      sourceFile: relPath,
+      isExported,
+    },
+  });
+
+  rels.push({
+    id: `${fileId}->declares_symbol->${ifaceId}`,
+    type: RelationshipType.DeclaresSymbol,
+    fromId: fileId,
+    toId: ifaceId,
+  });
+}
+
+function extractMethodSymbol(
+  node: ts.MethodDeclaration,
+  className: string,
+  classId: string,
+  relPath: string,
+  nodes: GraphNode[],
+  rels: GraphRelationship[],
+): void {
+  const methodName = ts.isIdentifier(node.name) ? node.name.text : null;
+  if (!methodName) return;
+
+  const qualifiedName = `${className}.${methodName}`;
+  const methodId = makeSemanticNodeId(relPath, 'Method', qualifiedName);
+  const modifiers = ts.getModifiers(node) ?? [];
+  const isPublic = !modifiers.some(
+    (m) => m.kind === ts.SyntaxKind.PrivateKeyword || m.kind === ts.SyntaxKind.ProtectedKeyword,
+  );
+  const isStatic = modifiers.some((m) => m.kind === ts.SyntaxKind.StaticKeyword);
+
+  let returnType: string | null = null;
+  if (node.type) {
+    try {
+      returnType = node.type.getText();
+    } catch {
+      returnType = null;
+    }
+  }
+
+  nodes.push({
+    id: methodId,
+    label: NodeLabel.Method,
+    properties: {
+      id: methodId,
+      name: methodName,
+      className,
+      sourceFile: relPath,
+      isPublic,
+      isStatic,
+      returnType,
+    },
+  });
+
+  rels.push({
+    id: `${classId}->has_method->${methodId}`,
+    type: RelationshipType.HasMethod,
+    fromId: classId,
+    toId: methodId,
+  });
+
+  // Extract CALLS_METHOD relationships from the method body
+  extractMethodCallRelationships(node, methodId, className, relPath, rels);
+}
+
+/**
+ * Walk a method body and emit CALLS_METHOD relationships for:
+ * - `this.methodName()`         → same-class call (toId resolved directly)
+ * - `this.dep.methodName()`     → cross-object call (pendingTargetName for normalizer resolution)
+ * The `line` property (1-based) marks where in the source the call appears.
+ */
+function extractMethodCallRelationships(
+  methodNode: ts.MethodDeclaration,
+  methodId: string,
+  className: string,
+  relPath: string,
+  rels: GraphRelationship[],
+): void {
+  if (!methodNode.body) return;
+
+  const sourceFile = methodNode.getSourceFile();
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const propAccess = node.expression;
+      const calleeName = ts.isIdentifier(propAccess.name) ? propAccess.name.text : null;
+      if (!calleeName) {
+        ts.forEachChild(node, visit);
+        return;
+      }
+
+      const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+      const lineNumber = line + 1; // convert to 1-based
+
+      if (propAccess.expression.kind === ts.SyntaxKind.ThisKeyword) {
+        // this.methodName() — call within the same class
+        const targetId = makeSemanticNodeId(relPath, 'Method', `${className}.${calleeName}`);
+        rels.push({
+          id: `${methodId}->calls->${targetId}:${lineNumber}`,
+          type: RelationshipType.CallsMethod,
+          fromId: methodId,
+          toId: targetId,
+          properties: { line: lineNumber, callee: calleeName },
+        });
+      } else if (
+        ts.isPropertyAccessExpression(propAccess.expression) &&
+        propAccess.expression.expression.kind === ts.SyntaxKind.ThisKeyword &&
+        ts.isIdentifier(propAccess.expression.name)
+      ) {
+        // this.dep.methodName() — call on an injected dependency
+        const depName = propAccess.expression.name.text;
+        rels.push({
+          id: `${methodId}->calls->${depName}.${calleeName}:${lineNumber}`,
+          type: RelationshipType.CallsMethod,
+          fromId: methodId,
+          toId: '',
+          pendingTargetName: calleeName,
+          properties: { line: lineNumber, callee: calleeName, via: depName },
+        });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  ts.forEachChild(methodNode.body, visit);
+}
+
+function extractPropertySymbol(
+  node: ts.PropertyDeclaration,
+  className: string,
+  classId: string,
+  relPath: string,
+  nodes: GraphNode[],
+  rels: GraphRelationship[],
+): void {
+  const propName = ts.isIdentifier(node.name) ? node.name.text : null;
+  if (!propName) return;
+
+  const qualifiedName = `${className}.${propName}`;
+  const propId = makeSemanticNodeId(relPath, 'Property', qualifiedName);
+  const modifiers = ts.getModifiers(node) ?? [];
+  const isPublic = !modifiers.some(
+    (m) => m.kind === ts.SyntaxKind.PrivateKeyword || m.kind === ts.SyntaxKind.ProtectedKeyword,
+  );
+  const isStatic = modifiers.some((m) => m.kind === ts.SyntaxKind.StaticKeyword);
+
+  const decorators = ts.getDecorators(node) ?? [];
+  const isInput = decorators.some((d) => {
+    if (!ts.isCallExpression(d.expression)) return false;
+    return getDecoratorName(d.expression) === 'Input';
+  });
+  const isOutput = decorators.some((d) => {
+    if (!ts.isCallExpression(d.expression)) return false;
+    return getDecoratorName(d.expression) === 'Output';
+  });
+
+  let type: string | null = null;
+  if (node.type) {
+    try {
+      type = node.type.getText();
+    } catch {
+      type = null;
+    }
+  }
+
+  nodes.push({
+    id: propId,
+    label: NodeLabel.Property,
+    properties: {
+      id: propId,
+      name: propName,
+      className,
+      sourceFile: relPath,
+      isPublic,
+      isStatic,
+      isInput,
+      isOutput,
+      type,
+    },
+  });
+
+  rels.push({
+    id: `${classId}->has_property->${propId}`,
+    type: RelationshipType.HasProperty,
+    fromId: classId,
+    toId: propId,
   });
 }
 

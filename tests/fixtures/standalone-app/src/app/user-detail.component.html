@@ -1,0 +1,9 @@
+<!-- Phase 3 fixture: template with property binding, event binding, two-way binding, structural directive, attribute directive, and pipe usage -->
+<div class="user-detail">
+  <h2>{{ title | uppercase }}</h2>
+  <p [title]="value">{{ name }}</p>
+  <button (clicked)="handler()">Submit</button>
+  <input [(ngModel)]="name" placeholder="Name" />
+  <div *ngIf="isVisible">Visible content</div>
+  <span appHighlight>Highlighted text</span>
+</div>

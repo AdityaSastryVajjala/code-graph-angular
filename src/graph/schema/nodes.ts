@@ -91,3 +91,69 @@ export interface IndexMetaNode {
   completedAt?: string;
   indexerVersion: string;
 }
+
+// ─── Phase 2: Semantic Symbol Nodes ──────────────────────────────────────────
+
+export interface ClassNode {
+  id: string;           // filePath::Class::ClassName
+  name: string;
+  sourceFile: string;   // relative path (for incremental updates)
+  isAbstract: boolean;
+  isExported: boolean;
+}
+
+export interface InterfaceNode {
+  id: string;           // filePath::Interface::InterfaceName
+  name: string;
+  sourceFile: string;
+  isExported: boolean;
+}
+
+export interface MethodNode {
+  id: string;           // filePath::Method::ClassName.methodName
+  name: string;
+  className: string;
+  sourceFile: string;
+  isPublic: boolean;
+  isStatic: boolean;
+  returnType: string | null;
+}
+
+export interface PropertyNode {
+  id: string;           // filePath::Property::ClassName.propName
+  name: string;
+  className: string;
+  sourceFile: string;
+  isPublic: boolean;
+  isStatic: boolean;
+  isInput: boolean;
+  isOutput: boolean;
+  type: string | null;
+}
+
+export interface TemplateNode {
+  id: string;           // filePath::Template::ComponentName
+  componentName: string;
+  sourceFile: string;   // .ts path (inline) or .html path (external)
+  templateType: 'inline' | 'external';
+  templatePath: string | null;
+}
+
+export interface InjectionTokenNode {
+  id: string;           // filePath::InjectionToken::tokenVarName
+  name: string;
+  description: string | null;
+  sourceFile: string;
+}
+
+// ─── Phase 3: Workspace Nodes ─────────────────────────────────────────────────
+
+export interface ProjectNode {
+  id: string;           // sha256(workspaceRoot + '::' + projectName).slice(0, 16)
+  name: string;
+  type: 'app' | 'lib';
+  category: 'feature' | 'domain' | 'shared' | 'utility' | null;
+  sourceRoot: string;
+  tags: string[];
+  workspaceRoot: string;
+}

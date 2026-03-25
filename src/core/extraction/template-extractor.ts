@@ -12,6 +12,7 @@ import type {
   TmplAstNode,
   TmplAstBoundAttribute,
   TmplAstBoundEvent,
+  TmplAstBoundText,
   BindingPipe,
   ASTWithSource,
 } from '@angular/compiler';
@@ -27,6 +28,7 @@ async function getCompiler(): Promise<typeof import('@angular/compiler')> {
   return compilerModule;
 }
 import { createHash } from 'crypto';
+import { makeSemanticNodeId } from './ts-extractor.js';
 import {
   GraphIR,
   GraphNode,
@@ -35,10 +37,284 @@ import {
   RelationshipType,
   SelectorMap,
 } from '../types/graph-ir.js';
+// Phase 3 typed relationship types (re-exported from RelationshipType for clarity)
+const {
+  TemplateBindsProperty,
+  TemplateBindsEvent,
+  TemplateTwoWayBinds,
+  TemplateUsesDirective,
+  TemplateUsesPipe,
+} = RelationshipType;
 import { logger } from '../../shared/logger.js';
 
 function makeRelId(...parts: string[]): string {
   return createHash('sha256').update(parts.join('|')).digest('hex').slice(0, 16);
+}
+
+/**
+ * Phase 2 — generate a deterministic Template node ID.
+ * Inline templates use the .ts sourceFile path; external templates use the .html path.
+ */
+export function makeTemplateNodeId(
+  sourceFile: string,
+  componentName: string,
+  _templateType: 'inline' | 'external',
+): string {
+  return makeSemanticNodeId(sourceFile, 'Template', componentName);
+}
+
+/** Known component members map: memberName → { nodeId, kind } */
+export type ComponentMembersMap = Map<string, { nodeId: string; kind: 'method' | 'property' }>;
+
+/**
+ * Phase 2 — extract Template node and BINDS_TO edges.
+ *
+ * @param templateContent   Raw HTML / inline template string
+ * @param templateUrl       Used for error reporting and ID generation. For inline templates this
+ *                          is the component .ts path; for external templates it is the .html path.
+ * @param componentRelPath  Relative path to the owning component .ts file
+ * @param componentName     Name of the owning component class
+ * @param componentNodeId   Graph node ID of the owning Component node
+ * @param knownMembers      Map of member name → { nodeId, kind } for BINDS_TO resolution
+ */
+export async function extractTemplateBindings(
+  templateContent: string,
+  templateUrl: string,
+  componentRelPath: string,
+  componentName: string,
+  componentNodeId: string,
+  knownMembers: ComponentMembersMap,
+): Promise<GraphIR> {
+  const { parseTemplate, TmplAstBoundText, TmplAstBoundAttribute, TmplAstBoundEvent } =
+    await getCompiler();
+
+  const nodes: GraphNode[] = [];
+  const relationships: GraphRelationship[] = [];
+
+  // Determine template type: external if templateUrl ends in .html
+  const templateType: 'inline' | 'external' = templateUrl.endsWith('.html') ? 'external' : 'inline';
+  const sourceFile = templateType === 'external' ? templateUrl : componentRelPath;
+  const templateId = makeTemplateNodeId(sourceFile, componentName, templateType);
+
+  nodes.push({
+    id: templateId,
+    label: NodeLabel.Template,
+    properties: {
+      id: templateId,
+      componentName,
+      sourceFile,
+      templateType,
+      templatePath: templateType === 'external' ? templateUrl : null,
+    },
+  });
+
+  relationships.push({
+    id: `${componentNodeId}->uses_template->${templateId}`,
+    type: RelationshipType.UsesTemplate,
+    fromId: componentNodeId,
+    toId: templateId,
+  });
+
+  // Parse template
+  let parsed;
+  try {
+    parsed = parseTemplate(templateContent, templateUrl, { preserveWhitespaces: false });
+  } catch (err) {
+    logger.warn('template_parse_error', {
+      filePath: templateUrl,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return { nodes, relationships, sourceFile };
+  }
+
+  if (parsed.errors && parsed.errors.length > 0) {
+    for (const e of parsed.errors) {
+      logger.warn(`template_parse_warning in ${templateUrl}: ${e.msg}`);
+    }
+  }
+
+  // Walk the template AST and emit BINDS_TO edges
+  walkBindings(
+    parsed.nodes,
+    templateId,
+    componentRelPath,
+    componentName,
+    knownMembers,
+    relationships,
+    { TmplAstBoundText, TmplAstBoundAttribute, TmplAstBoundEvent },
+  );
+
+  return { nodes, relationships, sourceFile };
+}
+
+type BindingClasses = {
+  TmplAstBoundText: typeof TmplAstBoundText;
+  TmplAstBoundAttribute: typeof TmplAstBoundAttribute;
+  TmplAstBoundEvent: typeof TmplAstBoundEvent;
+};
+
+function walkBindings(
+  tmplNodes: TmplAstNode[],
+  templateId: string,
+  componentRelPath: string,
+  componentName: string,
+  knownMembers: ComponentMembersMap,
+  rels: GraphRelationship[],
+  classes: BindingClasses,
+): void {
+  const { TmplAstBoundText, TmplAstBoundAttribute, TmplAstBoundEvent } = classes;
+
+  for (const node of tmplNodes) {
+    // Interpolation: {{ expr }}
+    if (node instanceof TmplAstBoundText) {
+      const identifiers = extractIdentifiersFromAst((node.value as ASTWithSource).ast);
+      for (const name of identifiers) {
+        emitBindsTo(name, 'interpolation', String((node.value as ASTWithSource).source ?? name), templateId, componentRelPath, componentName, knownMembers, rels);
+      }
+    }
+
+    // Property / two-way binding + event binding live on TmplAstElement / TmplAstTemplate
+    const asAny = node as unknown as Record<string, unknown>;
+
+    // inputs: BoundAttribute[]
+    if (Array.isArray(asAny['inputs'])) {
+      for (const bound of asAny['inputs'] as unknown[]) {
+        if (bound instanceof TmplAstBoundAttribute) {
+          const isTwoWay = bound.name === 'ngModel';
+          const bindingType = isTwoWay ? 'two-way' : 'property';
+          const src = String((bound.value as ASTWithSource).source ?? bound.name);
+          const identifiers = extractIdentifiersFromAst((bound.value as ASTWithSource).ast);
+          for (const name of identifiers) {
+            emitBindsTo(name, bindingType, src, templateId, componentRelPath, componentName, knownMembers, rels);
+            // Phase 3: also emit typed binding relationship
+            emitTypedBinding(name, isTwoWay ? TemplateTwoWayBinds : TemplateBindsProperty, bindingType, src, templateId, componentRelPath, componentName, knownMembers, rels);
+          }
+        }
+      }
+    }
+
+    // outputs: BoundEvent[]
+    if (Array.isArray(asAny['outputs'])) {
+      for (const evt of asAny['outputs'] as unknown[]) {
+        if (evt instanceof TmplAstBoundEvent) {
+          const src = String((evt.handler as ASTWithSource).source ?? evt.name);
+          const identifiers = extractIdentifiersFromAst((evt.handler as ASTWithSource).ast);
+          for (const name of identifiers) {
+            emitBindsTo(name, 'event', src, templateId, componentRelPath, componentName, knownMembers, rels);
+            // Phase 3: also emit typed event binding relationship
+            emitTypedBinding(name, TemplateBindsEvent, 'event', src, templateId, componentRelPath, componentName, knownMembers, rels);
+          }
+        }
+      }
+    }
+
+    // Recurse into children
+    if (Array.isArray(asAny['children'])) {
+      walkBindings(
+        asAny['children'] as TmplAstNode[],
+        templateId,
+        componentRelPath,
+        componentName,
+        knownMembers,
+        rels,
+        classes,
+      );
+    }
+  }
+}
+
+function emitBindsTo(
+  memberName: string,
+  bindingType: string,
+  expression: string,
+  templateId: string,
+  componentRelPath: string,
+  componentName: string,
+  knownMembers: ComponentMembersMap,
+  rels: GraphRelationship[],
+): void {
+  const member = knownMembers.get(memberName);
+  if (!member) {
+    logger.warn('unresolved_template_binding', {
+      filePath: componentRelPath,
+      componentName,
+      expression,
+      memberName,
+      reason: 'no matching method or property found on component',
+    });
+    return;
+  }
+
+  const relId = makeRelId(templateId, 'binds_to', member.nodeId, bindingType, expression);
+  rels.push({
+    id: relId,
+    type: RelationshipType.BindsTo,
+    fromId: templateId,
+    toId: member.nodeId,
+    properties: { bindingType, expression },
+  });
+}
+
+function emitTypedBinding(
+  memberName: string,
+  relType: RelationshipType,
+  bindingType: string,
+  expression: string,
+  templateId: string,
+  _componentRelPath: string,
+  _componentName: string,
+  knownMembers: ComponentMembersMap,
+  rels: GraphRelationship[],
+): void {
+  const member = knownMembers.get(memberName);
+  if (!member) return; // already warned in emitBindsTo
+
+  const relId = makeRelId(templateId, relType, member.nodeId, bindingType, expression);
+  // Avoid duplicates if already exists
+  if (rels.some((r) => r.id === relId)) return;
+  rels.push({
+    id: relId,
+    type: relType,
+    fromId: templateId,
+    toId: member.nodeId,
+    properties: { bindingType, expression, confidence: 'compiler' },
+  });
+}
+
+/**
+ * Best-effort extraction of simple identifier names from an Angular AST node.
+ * Returns identifiers referenced in the expression (e.g. property reads, method calls).
+ */
+function extractIdentifiersFromAst(ast: unknown): string[] {
+  if (!ast || typeof ast !== 'object') return [];
+  const names: string[] = [];
+  const seen = new Set<string>();
+
+  const visit = (node: unknown): void => {
+    if (!node || typeof node !== 'object') return;
+    const n = node as Record<string, unknown>;
+    const ctorName = (n['constructor'] as { name?: string } | undefined)?.name;
+
+    if (ctorName === 'PropertyRead' || ctorName === 'MethodCall' || ctorName === 'SafePropertyRead' || ctorName === 'SafeMethodCall') {
+      const name = n['name'] as string | undefined;
+      // Only collect implicit receiver reads (receiver is ImplicitReceiver = component scope)
+      const receiverCtor = ((n['receiver'] as Record<string, unknown> | null)?.['constructor'] as { name?: string } | undefined)?.name;
+      if (name && (receiverCtor === 'ImplicitReceiver' || receiverCtor === 'ThisReceiver') && !seen.has(name)) {
+        seen.add(name);
+        names.push(name);
+      }
+    }
+
+    for (const key of Object.keys(n)) {
+      if (key === 'constructor') continue;
+      const val = n[key];
+      if (Array.isArray(val)) val.forEach(visit);
+      else if (val && typeof val === 'object') visit(val);
+    }
+  };
+
+  visit(ast);
+  return names;
 }
 
 /**
@@ -132,6 +408,15 @@ function walkNodes(
             toId: elementMatch.nodeId,
             properties: { selector: tagName },
           });
+          // Phase 3: also emit typed directive relationship
+          const typedRelId = makeRelId(ownerNodeId, 'template_uses_directive', elementMatch.nodeId);
+          rels.push({
+            id: typedRelId,
+            type: TemplateUsesDirective,
+            fromId: ownerNodeId,
+            toId: elementMatch.nodeId,
+            properties: { selector: tagName, usageType: 'element' },
+          });
         }
       } else if (tagName.includes('-') && !isNativeElement(tagName)) {
         // Unknown custom element — record as ExternalComponent node + USES_EXTERNAL edge.
@@ -167,6 +452,15 @@ function walkNodes(
             fromId: ownerNodeId,
             toId: attrMatch.nodeId,
             properties: { selector: attr.name },
+          });
+          // Phase 3: also emit typed directive relationship for attribute directive
+          const typedRelId = makeRelId(ownerNodeId, 'template_uses_directive_attr', attrMatch.nodeId, attr.name);
+          rels.push({
+            id: typedRelId,
+            type: TemplateUsesDirective,
+            fromId: ownerNodeId,
+            toId: attrMatch.nodeId,
+            properties: { selector: attr.name, usageType: 'attribute', confidence: 'compiler' },
           });
         }
       }
@@ -223,6 +517,15 @@ function extractPipeUsages(
           rels.push({
             id: relId,
             type: RelationshipType.UsesPipe,
+            fromId: ownerNodeId,
+            toId: entry.nodeId,
+            properties: { expression: pipeName },
+          });
+          // Phase 3: also emit typed pipe relationship
+          const typedRelId = makeRelId(ownerNodeId, 'template_uses_pipe', entry.nodeId, pipeName);
+          rels.push({
+            id: typedRelId,
+            type: TemplateUsesPipe,
             fromId: ownerNodeId,
             toId: entry.nodeId,
             properties: { expression: pipeName },

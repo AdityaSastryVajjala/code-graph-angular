@@ -18,6 +18,19 @@ import { findServiceUsage } from './tools/find-service-usage.js';
 import { traceRoute } from './tools/trace-route.js';
 import { getModuleStructure } from './tools/get-module-structure.js';
 import { getEntityDetail } from './tools/get-entity-detail.js';
+import { getClassMembers } from './tools/get-class-members.js';
+import { getTemplateBindings } from './tools/get-template-bindings.js';
+import { getDiConsumers } from './tools/get-di-consumers.js';
+import { getTestCoverage } from './tools/get-test-coverage.js';
+import { getImpactFromFile } from './tools/get-impact-from-file.js';
+import { getImpactFromSymbol } from './tools/get-impact-from-symbol.js';
+import { getDependents } from './tools/get-dependents.js';
+import { getDependencies } from './tools/get-dependencies.js';
+import { getProjectDependencies } from './tools/get-project-dependencies.js';
+import { getTemplateUsages } from './tools/get-template-usages.js';
+import { getMetrics } from './tools/get-metrics.js';
+import { findSymbol } from './tools/find-symbol.js';
+import { getInjections } from './tools/get-injections.js';
 import { logger } from '../shared/logger.js';
 
 // ─── Pagination Helpers ───────────────────────────────────────────────────────
@@ -145,10 +158,214 @@ const TOOL_DEFINITIONS = [
         entityId: { type: 'string' },
         entityType: {
           type: 'string',
-          enum: ['Component', 'Service', 'NgModule', 'Directive', 'Pipe', 'Route'],
+          enum: ['Component', 'Service', 'NgModule', 'Directive', 'Pipe', 'Route', 'Class'],
         },
       },
       required: ['appDb', 'entityId', 'entityType'],
+    },
+  },
+  {
+    name: 'get_class_members',
+    description: 'Get methods and properties for a TypeScript class',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appDb: { type: 'string' },
+        className: { type: 'string' },
+        filePath: { type: 'string' },
+        detail: { type: 'boolean', default: false },
+        cursor: { type: 'string' },
+        limit: { type: 'number', default: 20 },
+      },
+      required: ['appDb', 'className'],
+    },
+  },
+  {
+    name: 'get_template_bindings',
+    description: 'Get template bindings (interpolations, property/event bindings) for a component',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appDb: { type: 'string' },
+        componentName: { type: 'string' },
+        detail: { type: 'boolean', default: false },
+      },
+      required: ['appDb', 'componentName'],
+    },
+  },
+  {
+    name: 'get_di_consumers',
+    description: 'Find all classes that inject a given service or InjectionToken',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appDb: { type: 'string' },
+        serviceName: { type: 'string' },
+        cursor: { type: 'string' },
+        limit: { type: 'number', default: 20 },
+      },
+      required: ['appDb', 'serviceName'],
+    },
+  },
+  {
+    name: 'get_test_coverage',
+    description: 'Find spec files that test a given Angular entity',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appDb: { type: 'string' },
+        targetName: { type: 'string' },
+      },
+      required: ['appDb', 'targetName'],
+    },
+  },
+  {
+    name: 'get_impact_from_file',
+    description: 'Full impact analysis from a file — returns all affected nodes classified by impact type',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appDb: { type: 'string' },
+        filePath: { type: 'string' },
+        depth: { type: 'number', default: 5 },
+        includeTests: { type: 'boolean', default: false },
+        projectId: { type: 'string' },
+        summary: { type: 'boolean', default: true },
+        pageSize: { type: 'number', default: 50 },
+        cursor: { type: 'string' },
+      },
+      required: ['appDb', 'filePath'],
+    },
+  },
+  {
+    name: 'get_impact_from_symbol',
+    description: 'Full impact analysis from a symbol — returns all affected nodes classified by impact type',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appDb: { type: 'string' },
+        symbolId: { type: 'string' },
+        depth: { type: 'number', default: 5 },
+        includeTests: { type: 'boolean', default: false },
+        projectId: { type: 'string' },
+        summary: { type: 'boolean', default: true },
+        pageSize: { type: 'number', default: 50 },
+        cursor: { type: 'string' },
+      },
+      required: ['appDb', 'symbolId'],
+    },
+  },
+  {
+    name: 'get_dependents',
+    description: 'Find all nodes that depend on a given symbol (inbound edges)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appDb: { type: 'string' },
+        symbolId: { type: 'string' },
+        depth: { type: 'number', default: 3 },
+        edgeKinds: { type: 'array', items: { type: 'string' } },
+        projectId: { type: 'string' },
+        includeTests: { type: 'boolean', default: false },
+        minimal: { type: 'boolean', default: true },
+        pageSize: { type: 'number', default: 20 },
+        cursor: { type: 'string' },
+      },
+      required: ['appDb', 'symbolId'],
+    },
+  },
+  {
+    name: 'get_dependencies',
+    description: 'Find all nodes that a given symbol depends on (outbound edges)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appDb: { type: 'string' },
+        symbolId: { type: 'string' },
+        depth: { type: 'number', default: 3 },
+        edgeKinds: { type: 'array', items: { type: 'string' } },
+        projectId: { type: 'string' },
+        minimal: { type: 'boolean', default: true },
+        pageSize: { type: 'number', default: 20 },
+        cursor: { type: 'string' },
+      },
+      required: ['appDb', 'symbolId'],
+    },
+  },
+  {
+    name: 'get_project_dependencies',
+    description: 'Show project-level dependency graph — which projects depend on which',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appDb: { type: 'string' },
+        projectId: { type: 'string' },
+        direction: { type: 'string', enum: ['dependencies', 'consumers', 'both'], default: 'both' },
+      },
+      required: ['appDb'],
+    },
+  },
+  {
+    name: 'get_template_usages',
+    description: 'Find all templates that use a given component, directive, pipe, or component member',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appDb: { type: 'string' },
+        symbolId: { type: 'string' },
+        minimal: { type: 'boolean', default: true },
+        pageSize: { type: 'number', default: 20 },
+        cursor: { type: 'string' },
+      },
+      required: ['appDb', 'symbolId'],
+    },
+  },
+  {
+    name: 'get_metrics',
+    description: 'Return dependency and usage counts for a node or project',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appDb: { type: 'string' },
+        entityId: { type: 'string' },
+        entityType: {
+          type: 'string',
+          enum: ['File', 'Component', 'Service', 'Directive', 'Pipe', 'Class', 'Interface', 'Method', 'Property', 'InjectionToken', 'Project'],
+        },
+      },
+      required: ['appDb', 'entityId', 'entityType'],
+    },
+  },
+  {
+    name: 'find_symbol',
+    description: 'Search for any graph symbol by name, kind, or file',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appDb: { type: 'string' },
+        name: { type: 'string' },
+        kind: { type: 'string', enum: ['Component', 'Service', 'Directive', 'Pipe', 'Class', 'Interface', 'Method', 'Property', 'InjectionToken', 'NgModule'] },
+        filePath: { type: 'string' },
+        minimal: { type: 'boolean', default: true },
+        pageSize: { type: 'number', default: 20 },
+        cursor: { type: 'string' },
+      },
+      required: ['appDb', 'name'],
+    },
+  },
+  {
+    name: 'get_injections',
+    description: 'Find all classes that inject a given Service or InjectionToken',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appDb: { type: 'string' },
+        symbolId: { type: 'string' },
+        minimal: { type: 'boolean', default: true },
+        pageSize: { type: 'number', default: 20 },
+        cursor: { type: 'string' },
+      },
+      required: ['appDb', 'symbolId'],
     },
   },
 ];
@@ -192,6 +409,45 @@ export async function startMcpServer(driver: Driver): Promise<void> {
           break;
         case 'get_entity_detail':
           result = await getEntityDetail(driver, input);
+          break;
+        case 'get_class_members':
+          result = await getClassMembers(driver, input);
+          break;
+        case 'get_template_bindings':
+          result = await getTemplateBindings(driver, input);
+          break;
+        case 'get_di_consumers':
+          result = await getDiConsumers(driver, input);
+          break;
+        case 'get_test_coverage':
+          result = await getTestCoverage(driver, input);
+          break;
+        case 'get_impact_from_file':
+          result = await getImpactFromFile(driver, input);
+          break;
+        case 'get_impact_from_symbol':
+          result = await getImpactFromSymbol(driver, input);
+          break;
+        case 'get_dependents':
+          result = await getDependents(driver, input);
+          break;
+        case 'get_dependencies':
+          result = await getDependencies(driver, input);
+          break;
+        case 'get_project_dependencies':
+          result = await getProjectDependencies(driver, input);
+          break;
+        case 'get_template_usages':
+          result = await getTemplateUsages(driver, input);
+          break;
+        case 'get_metrics':
+          result = await getMetrics(driver, input);
+          break;
+        case 'find_symbol':
+          result = await findSymbol(driver, input);
+          break;
+        case 'get_injections':
+          result = await getInjections(driver, input);
           break;
         default:
           return {

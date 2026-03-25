@@ -7,7 +7,7 @@
  */
 
 import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import { resolve, basename } from 'path';
 import { Driver } from 'neo4j-driver';
 import { AngularApp, ChangedFileSet, IncrementalStats } from '../core/types/graph-ir.js';
 import { extractTsFile } from '../core/extraction/ts-extractor.js';
@@ -33,10 +33,40 @@ export async function processChanges(
   let deltaEdges = 0;
 
   try {
+    // Check for workspace config changes (angular.json, nx.json, project.json)
+    const workspaceConfigChanged = changedFiles.files.some((f) => {
+      const name = basename(f.path);
+      return name === 'angular.json' || name === 'nx.json' || name === 'project.json';
+    });
+
+    if (workspaceConfigChanged) {
+      logger.info('workspace_config_changed', {
+        appName: app.name,
+        files: changedFiles.files
+          .filter((f) => {
+            const name = basename(f.path);
+            return name === 'angular.json' || name === 'nx.json' || name === 'project.json';
+          })
+          .map((f) => f.path),
+      });
+      // Workspace config changes require re-extraction of Project nodes and relationships.
+      // The full re-index pipeline handles this; incremental just logs and re-indexes those files.
+    }
+
     // 1. Delete nodes for all changed files (deleted OR modified — will re-add modified)
     for (const file of changedFiles.files) {
+      // Phase 1 nodes: keyed by filePath property
       await session.run(
         'MATCH (n) WHERE n.filePath = $path DETACH DELETE n',
+        { path: file.path },
+      );
+      // Phase 2 semantic nodes: keyed by sourceFile property
+      await session.run(
+        `MATCH (n)
+         WHERE n.sourceFile = $path
+           AND (n:Class OR n:Interface OR n:Method OR n:Property
+                OR n:Template OR n:InjectionToken)
+         DETACH DELETE n`,
         { path: file.path },
       );
     }

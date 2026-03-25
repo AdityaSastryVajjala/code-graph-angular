@@ -25,4 +25,24 @@ export const RELATIONSHIP_TYPES: Record<RelationshipType, string> = {
   [RelationshipType.RouteIn]: 'ROUTE_IN',
   [RelationshipType.Tests]: 'TESTS',
   [RelationshipType.UsesExternal]: 'USES_EXTERNAL',
+  // Phase 2 — semantic relationships
+  [RelationshipType.DeclaresSymbol]: 'DECLARES_SYMBOL',
+  [RelationshipType.HasMethod]: 'HAS_METHOD',
+  [RelationshipType.HasProperty]: 'HAS_PROPERTY',
+  [RelationshipType.Implements]: 'IMPLEMENTS',
+  [RelationshipType.Extends]: 'EXTENDS',
+  [RelationshipType.UsesTemplate]: 'USES_TEMPLATE',
+  [RelationshipType.BindsTo]: 'BINDS_TO',
+  [RelationshipType.RoutesTo]: 'ROUTES_TO',
+  [RelationshipType.LazyLoads]: 'LAZY_LOADS',
+  // Phase 3 — workspace and template binding relationships
+  [RelationshipType.BelongsToProject]: 'BELONGS_TO_PROJECT',
+  [RelationshipType.ProjectDependsOn]: 'PROJECT_DEPENDS_ON',
+  [RelationshipType.TemplateBindsProperty]: 'TEMPLATE_BINDS_PROPERTY',
+  [RelationshipType.TemplateBindsEvent]: 'TEMPLATE_BINDS_EVENT',
+  [RelationshipType.TemplateTwoWayBinds]: 'TEMPLATE_TWO_WAY_BINDS',
+  [RelationshipType.TemplateUsesDirective]: 'TEMPLATE_USES_DIRECTIVE',
+  [RelationshipType.TemplateUsesPipe]: 'TEMPLATE_USES_PIPE',
+  // Phase 3 — method call tracking
+  [RelationshipType.CallsMethod]: 'CALLS_METHOD',
 };
