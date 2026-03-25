@@ -1,0 +1,16 @@
+{
+  "defaultProject": "standalone-app",
+  "projects": {
+    "standalone-app": {
+      "projectType": "application",
+      "sourceRoot": "src",
+      "architect": {
+        "build": {
+          "options": {
+            "main": "src/main.ts"
+          }
+        }
+      }
+    }
+  }
+}

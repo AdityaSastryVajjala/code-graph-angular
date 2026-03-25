@@ -1,0 +1,4 @@
+{
+  "npmScope": "myorg",
+  "affected": { "defaultBase": "main" }
+}

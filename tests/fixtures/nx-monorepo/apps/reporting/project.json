@@ -1,0 +1,5 @@
+{
+  "name": "reporting",
+  "projectType": "application",
+  "sourceRoot": "apps/reporting/src"
+}

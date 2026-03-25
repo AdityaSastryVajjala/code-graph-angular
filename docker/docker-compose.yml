@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  neo4j:
+    image: neo4j:5.18-enterprise
+    container_name: codegraph-neo4j
+    ports:
+      - "7474:7474"   # HTTP Browser
+      - "7687:7687"   # Bolt
+    environment:
+      - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
+      - NEO4J_AUTH=neo4j/codegraph
+      - NEO4J_dbms_default__database=neo4j
+      - NEO4J_dbms_security_auth__enabled=true
+      - NEO4J_server_memory_heap_initial__size=512m
+      - NEO4J_server_memory_heap_max__size=2g
+      - NEO4J_server_memory_pagecache_size=512m
+      - NEO4J_dbms_databases_default__to__read__only=false
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_plugins:/plugins
+    healthcheck:
+      test: ["CMD", "neo4j", "status"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+    restart: unless-stopped
+
+volumes:
+  neo4j_data:
+    driver: local
+  neo4j_logs:
+    driver: local
+  neo4j_plugins:
+    driver: local
