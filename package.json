@@ -22,7 +22,7 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "@angular/compiler": "^17.0.0",
+    "@angular/compiler": "^21.0.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "chokidar": "^3.5.3",
     "commander": "^12.0.0",

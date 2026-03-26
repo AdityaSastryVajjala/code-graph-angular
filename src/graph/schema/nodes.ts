@@ -157,3 +157,30 @@ export interface ProjectNode {
   tags: string[];
   workspaceRoot: string;
 }
+
+// ─── Phase 4: Migration Intelligence Nodes ───────────────────────────────────
+
+export interface FindingNode {
+  id: string;                               // SHA-256 prefix: {affectedNodeId}::{reasonCode}::{scope}
+  type: 'blocker' | 'risk' | 'opportunity';
+  category: 'angular' | 'rxjs' | 'template' | 'architecture';
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  affectedNodeId: string;
+  reasonCode: string;
+  description: string;
+  recommendedAction: string;
+  confidenceScore: number;                  // 0.0–1.0
+  scope: 'production' | 'test';
+  isDeprecatedUsage?: boolean;
+  migrationRunId: string;
+}
+
+export interface WorkItemSeedNode {
+  id: string;                               // SHA-256 prefix: workitem::{findingId}
+  title: string;
+  description: string;
+  priority: 'p1' | 'p2' | 'p3';
+  affectedArtifacts: string[];
+  dependencyHints?: string[];
+  migrationRunId: string;
+}

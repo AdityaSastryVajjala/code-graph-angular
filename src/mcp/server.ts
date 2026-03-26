@@ -31,6 +31,11 @@ import { getTemplateUsages } from './tools/get-template-usages.js';
 import { getMetrics } from './tools/get-metrics.js';
 import { findSymbol } from './tools/find-symbol.js';
 import { getInjections } from './tools/get-injections.js';
+import { getStandaloneCandidates } from './tools/get-standalone-candidates.js';
+import { getMigrationFindings } from './tools/get-migration-findings.js';
+import { getMigrationOrder } from './tools/get-migration-order.js';
+import { getDeprecatedPatterns } from './tools/get-deprecated-patterns.js';
+import { getMigrationSummary } from './tools/get-migration-summary.js';
 import { logger } from '../shared/logger.js';
 
 // ─── Pagination Helpers ───────────────────────────────────────────────────────
@@ -368,6 +373,88 @@ const TOOL_DEFINITIONS = [
       required: ['appDb', 'symbolId'],
     },
   },
+  // Phase 4 — migration intelligence tools
+  {
+    name: 'get_standalone_candidates',
+    description: 'List Angular artifacts (components, directives, pipes) that are candidates for standalone migration',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appDb: { type: 'string' },
+        projectId: { type: 'string' },
+        candidatesOnly: { type: 'boolean', default: false },
+        includeBlockers: { type: 'boolean', default: true },
+        pageSize: { type: 'number', default: 50 },
+        cursor: { type: 'string' },
+      },
+      required: ['appDb'],
+    },
+  },
+  {
+    name: 'get_migration_findings',
+    description: 'Query migration findings by type, category, severity, scope, or affected node',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appDb: { type: 'string' },
+        type: { type: 'string', enum: ['blocker', 'risk', 'opportunity'] },
+        category: { type: 'string', enum: ['angular', 'rxjs', 'template', 'architecture'] },
+        severity: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] },
+        scope: { type: 'string', enum: ['production', 'test'] },
+        affectedNodeId: { type: 'string' },
+        projectId: { type: 'string' },
+        minConfidence: { type: 'number', default: 0 },
+        pageSize: { type: 'number', default: 50 },
+        cursor: { type: 'string' },
+      },
+      required: ['appDb'],
+    },
+  },
+  {
+    name: 'get_migration_order',
+    description: 'Get the dependency-safe migration order for an app or project with parallelizable groups',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appDb: { type: 'string' },
+        projectId: { type: 'string' },
+        includeBlockers: { type: 'boolean', default: true },
+        pageSize: { type: 'number', default: 100 },
+        cursor: { type: 'string' },
+      },
+      required: ['appDb'],
+    },
+  },
+  {
+    name: 'get_deprecated_patterns',
+    description: 'List all deprecated Angular and RxJS pattern findings for an app',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appDb: { type: 'string' },
+        category: { type: 'string', enum: ['angular', 'rxjs'] },
+        severity: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] },
+        scope: { type: 'string', enum: ['production', 'test'] },
+        projectId: { type: 'string' },
+        pageSize: { type: 'number', default: 50 },
+        cursor: { type: 'string' },
+      },
+      required: ['appDb'],
+    },
+  },
+  {
+    name: 'get_migration_summary',
+    description: 'High-level migration readiness summary for an app — standalone candidates, deprecated patterns, migration order, and work item seeds',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appDb: { type: 'string' },
+        projectId: { type: 'string' },
+        includeWorkItemSeeds: { type: 'boolean', default: false },
+      },
+      required: ['appDb'],
+    },
+  },
 ];
 
 // ─── Server Bootstrap ─────────────────────────────────────────────────────────
@@ -448,6 +535,22 @@ export async function startMcpServer(driver: Driver): Promise<void> {
           break;
         case 'get_injections':
           result = await getInjections(driver, input);
+          break;
+        // Phase 4 — migration intelligence
+        case 'get_standalone_candidates':
+          result = await getStandaloneCandidates(driver, input);
+          break;
+        case 'get_migration_findings':
+          result = await getMigrationFindings(driver, input);
+          break;
+        case 'get_migration_order':
+          result = await getMigrationOrder(driver, input);
+          break;
+        case 'get_deprecated_patterns':
+          result = await getDeprecatedPatterns(driver, input);
+          break;
+        case 'get_migration_summary':
+          result = await getMigrationSummary(driver, input);
           break;
         default:
           return {

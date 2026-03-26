@@ -6,6 +6,9 @@
 import { Session } from 'neo4j-driver';
 
 const CONSTRAINTS = [
+  // Phase 4 — migration intelligence
+  'CREATE CONSTRAINT IF NOT EXISTS FOR (n:Finding) REQUIRE n.id IS UNIQUE',
+  'CREATE CONSTRAINT IF NOT EXISTS FOR (n:WorkItemSeed) REQUIRE n.id IS UNIQUE',
   // Phase 3 — workspace
   'CREATE CONSTRAINT IF NOT EXISTS FOR (n:Project) REQUIRE n.id IS UNIQUE',
   'CREATE CONSTRAINT IF NOT EXISTS FOR (n:Application) REQUIRE n.id IS UNIQUE',
@@ -61,6 +64,19 @@ const INDEXES = [
   'CREATE INDEX IF NOT EXISTS FOR (n:Project) ON (n.sourceRoot)',
   // Phase 3 — method call tracking
   'CREATE INDEX IF NOT EXISTS FOR ()-[r:CALLS_METHOD]-() ON (r.line)',
+  // Phase 4 — migration intelligence
+  'CREATE INDEX IF NOT EXISTS FOR (n:Finding) ON (n.affectedNodeId)',
+  'CREATE INDEX IF NOT EXISTS FOR (n:Finding) ON (n.severity)',
+  'CREATE INDEX IF NOT EXISTS FOR (n:Finding) ON (n.category)',
+  'CREATE INDEX IF NOT EXISTS FOR (n:Finding) ON (n.type)',
+  'CREATE INDEX IF NOT EXISTS FOR (n:Finding) ON (n.scope)',
+  'CREATE INDEX IF NOT EXISTS FOR (n:Finding) ON (n.migrationRunId)',
+  'CREATE INDEX IF NOT EXISTS FOR (n:WorkItemSeed) ON (n.priority)',
+  'CREATE INDEX IF NOT EXISTS FOR (n:WorkItemSeed) ON (n.migrationRunId)',
+  'CREATE INDEX IF NOT EXISTS FOR (n:Component) ON (n.isStandaloneCandidate)',
+  'CREATE INDEX IF NOT EXISTS FOR (n:NgModule) ON (n.moduleComplexityScore)',
+  'CREATE INDEX IF NOT EXISTS FOR (n:NgModule) ON (n.standaloneMigrationFeasibility)',
+  'CREATE INDEX IF NOT EXISTS FOR (n:NgModule) ON (n.migrationOrderIndex)',
 ];
 
 /**

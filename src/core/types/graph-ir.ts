@@ -29,6 +29,9 @@ export enum NodeLabel {
   InjectionToken = 'InjectionToken',
   // Phase 3 — workspace
   Project = 'Project',
+  // Phase 4 — migration intelligence
+  Finding = 'Finding',
+  WorkItemSeed = 'WorkItemSeed',
 }
 
 // ─── Relationship Types ──────────────────────────────────────────────────────
@@ -88,6 +91,11 @@ export enum RelationshipType {
   TemplateUsesPipe = 'TEMPLATE_USES_PIPE',
   // Phase 3 — method call tracking
   CallsMethod = 'CALLS_METHOD',
+  // Phase 4 — migration intelligence
+  HasFinding = 'HAS_FINDING',
+  FindingGenerates = 'FINDING_GENERATES',
+  MigrationOrder = 'MIGRATION_ORDER',
+  WorkItemDependsOn = 'WORK_ITEM_DEPENDS_ON',
 }
 
 // ─── Core GraphIR Types ──────────────────────────────────────────────────────

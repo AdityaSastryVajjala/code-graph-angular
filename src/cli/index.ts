@@ -135,6 +135,52 @@ program
     await startMcpServer(driver);
   });
 
+// ─── migrate analyze ──────────────────────────────────────────────────────────
+
+program
+  .command('migrate')
+  .description('Migration intelligence commands')
+  .addCommand(
+    (() => {
+      const cmd = program.createCommand('analyze')
+        .description('Run full migration analysis for an Angular application')
+        .requiredOption('--app <appName>', 'Application database name (same as used during index)')
+        .option('--neo4j-url <url>', 'Neo4j Bolt URL', process.env['NEO4J_URL'] ?? 'bolt://localhost:7687')
+        .option('--neo4j-user <user>', 'Neo4j username', process.env['NEO4J_USER'] ?? 'neo4j')
+        .option('--neo4j-password <password>', 'Neo4j password', process.env['NEO4J_PASSWORD'] ?? 'codegraph')
+        .option('--output <path>', 'Write JSON export to this file path')
+        .option('--target-version <version>', 'Target Angular version to migrate to (e.g. "19.0.0")', 'latest')
+        .action(async (opts) => {
+          const driver = await createDriver({
+            url: opts.neo4jUrl,
+            user: opts.neo4jUser,
+            password: opts.neo4jPassword,
+          }).catch((err) => {
+            console.error('[migrate] Database connection error:', err instanceof Error ? err.message : err);
+            process.exit(1);
+          });
+
+          try {
+            const { MigrationRunner } = await import('../migration/migration-runner.js');
+            const runner = new MigrationRunner(driver);
+            await runner.run({ appDb: opts.app, outputPath: opts.output, targetAngularVersion: opts.targetVersion });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            const code = (err as NodeJS.ErrnoException).code;
+            if (code === 'APP_NOT_FOUND') {
+              console.error(`[migrate] App '${opts.app}' not found in graph. Run 'codegraph index' first.`);
+              process.exit(2);
+            }
+            console.error('[migrate] Analysis error:', msg);
+            process.exit(3);
+          } finally {
+            await closeDriver(driver);
+          }
+        });
+      return cmd;
+    })(),
+  );
+
 program.parse();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

@@ -45,4 +45,9 @@ export const RELATIONSHIP_TYPES: Record<RelationshipType, string> = {
   [RelationshipType.TemplateUsesPipe]: 'TEMPLATE_USES_PIPE',
   // Phase 3 — method call tracking
   [RelationshipType.CallsMethod]: 'CALLS_METHOD',
+  // Phase 4 — migration intelligence
+  [RelationshipType.HasFinding]: 'HAS_FINDING',
+  [RelationshipType.FindingGenerates]: 'FINDING_GENERATES',
+  [RelationshipType.MigrationOrder]: 'MIGRATION_ORDER',
+  [RelationshipType.WorkItemDependsOn]: 'WORK_ITEM_DEPENDS_ON',
 };
