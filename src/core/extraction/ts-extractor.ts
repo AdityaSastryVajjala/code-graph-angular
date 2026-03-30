@@ -5,11 +5,12 @@
 
 import ts from 'typescript';
 import { createHash } from 'crypto';
-import { relative } from 'path';
+import { relative, dirname, resolve } from 'path';
 import {
   GraphIR,
   GraphNode,
   GraphRelationship,
+  InlineTemplateInfo,
   NodeLabel,
   RelationshipType,
 } from '../types/graph-ir.js';
@@ -57,6 +58,7 @@ export function extractTsFile(
 
   const nodes: GraphNode[] = [];
   const relationships: GraphRelationship[] = [];
+  const inlineTemplates: InlineTemplateInfo[] = [];
 
   // Create File node
   const fileId = makeFileId(relPath);
@@ -82,7 +84,7 @@ export function extractTsFile(
 
       switch (decoratorName) {
         case 'Component':
-          extractComponent(node, className, relPath, fileId, decorator, nodes, relationships);
+          extractComponent(node, className, relPath, fileId, decorator, nodes, relationships, inlineTemplates);
           break;
         case 'Injectable':
           extractService(node, className, relPath, fileId, decorator, nodes, relationships);
@@ -112,7 +114,41 @@ export function extractTsFile(
   const routeIR = extractRoutes(absolutePath, source, appRoot);
   relationships.push(...routeIR.relationships);
 
-  return { nodes, relationships, sourceFile: relPath };
+  // Phase 5 — emit IMPORTS_FROM edges for relative TypeScript imports
+  const thisDir = dirname(absolutePath);
+  ts.forEachChild(sourceFile, (node) => {
+    if (!ts.isImportDeclaration(node)) return;
+    const spec = node.moduleSpecifier;
+    if (!ts.isStringLiteral(spec)) return;
+    const importPath = spec.text;
+    if (!importPath.startsWith('./') && !importPath.startsWith('../')) return;
+
+    let resolved = resolve(thisDir, importPath);
+    // Normalise .js extension (ESM output) to .ts source
+    if (resolved.endsWith('.js')) {
+      resolved = resolved.slice(0, -3) + '.ts';
+    } else if (!resolved.endsWith('.ts')) {
+      resolved = resolved + '.ts';
+    }
+    const targetRelPath = relative(appRoot, resolved).replace(/\\/g, '/');
+    const targetFileId = makeFileId(targetRelPath);
+    const edgeId = `${fileId}->IMPORTS_FROM->${targetFileId}`;
+    if (!relationships.some((r) => r.id === edgeId)) {
+      relationships.push({
+        id: edgeId,
+        type: RelationshipType.ImportsFrom,
+        fromId: fileId,
+        toId: targetFileId,
+      });
+    }
+  });
+
+  return {
+    nodes,
+    relationships,
+    sourceFile: relPath,
+    meta: inlineTemplates.length > 0 ? { inlineTemplates } : undefined,
+  };
 }
 
 // ─── Entity Extractors ────────────────────────────────────────────────────────
@@ -125,12 +161,14 @@ function extractComponent(
   decorator: ts.Decorator,
   nodes: GraphNode[],
   rels: GraphRelationship[],
+  inlineTemplates: InlineTemplateInfo[],
 ): void {
   const meta = getDecoratorObjectArg(decorator);
   const nodeId = makeNodeId(relPath, className);
 
   const selector = getStringProp(meta, 'selector') ?? '';
   const templateUrl = getStringProp(meta, 'templateUrl');
+  const inlineTemplate = getTemplateProp(meta, 'template');
   const isStandalone = getBoolProp(meta, 'standalone') ?? false;
   const styleUrlsArr = getStringArrayProp(meta, 'styleUrls');
 
@@ -156,6 +194,15 @@ function extractComponent(
     fromId: nodeId,
     toId: fileId,
   });
+
+  // Capture inline template for pipeline processing
+  if (inlineTemplate !== undefined) {
+    inlineTemplates.push({
+      componentNodeId: nodeId,
+      componentFilePath: relPath,
+      templateSource: inlineTemplate,
+    });
+  }
 
   // Extract constructor injection
   extractConstructorInjection(node, nodeId, relPath, rels);
@@ -771,6 +818,21 @@ function getStringProp(
     if (!ts.isPropertyAssignment(prop)) continue;
     if (!isPropertyNamed(prop, key)) continue;
     if (ts.isStringLiteral(prop.initializer)) return prop.initializer.text;
+  }
+  return undefined;
+}
+
+/** Like getStringProp but also handles NoSubstitutionTemplateLiteral (backtick strings without expressions). */
+function getTemplateProp(
+  meta: ts.ObjectLiteralExpression | null,
+  key: string,
+): string | undefined {
+  if (!meta) return undefined;
+  for (const prop of meta.properties) {
+    if (!ts.isPropertyAssignment(prop)) continue;
+    if (!isPropertyNamed(prop, key)) continue;
+    if (ts.isStringLiteral(prop.initializer)) return prop.initializer.text;
+    if (ts.isNoSubstitutionTemplateLiteral(prop.initializer)) return prop.initializer.text;
   }
   return undefined;
 }

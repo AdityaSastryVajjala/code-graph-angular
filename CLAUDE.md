@@ -1,6 +1,6 @@
 ﻿# code-graph-angular Development Guidelines
 
-Last updated: 2026-03-25
+Last updated: 2026-03-26
 
 ## Project Overview
 
@@ -15,6 +15,7 @@ Graph-based code intelligence platform for Angular workspaces. Parses Angular so
 - Neo4j Enterprise (existing multi-database; one DB per Angular app) (004-migration-intelligence)
 - [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION] + [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION] (004-migration-intelligence)
 - [if applicable, e.g., PostgreSQL, CoreData, files or N/A] (004-migration-intelligence)
+- TypeScript 5.4, Node.js 20 LTS (target ES2022, CommonJS) + `neo4j-driver` ^5, `@modelcontextprotocol/sdk` ^1, `zod`, `semver` (add as direct dependency for version range parsing) (005-pkg-compat-analyzer)
 
 - **Runtime**: Node.js 20 LTS, TypeScript 5.4 (target ES2022, commonjs)
 - **Parsing**: `typescript` Compiler API, `@angular/compiler` (template parsing)

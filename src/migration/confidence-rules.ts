@@ -7,7 +7,7 @@
 export interface ConfidenceRule {
   confidenceScore: number;
   severity: 'low' | 'medium' | 'high' | 'critical';
-  category: 'angular' | 'rxjs' | 'template' | 'architecture';
+  category: 'angular' | 'rxjs' | 'template' | 'architecture' | 'package';
   description: string;
   recommendedAction: string;
 }
@@ -187,6 +187,32 @@ export const CONFIDENCE_RULES: Record<string, ConfidenceRule> = {
     category: 'architecture',
     description: 'Circular dependency detected in module import chain — migration ordering is blocked.',
     recommendedAction: 'Resolve circular dependency before attempting standalone migration of affected modules.',
+  },
+
+  // ─── Phase 5: Package Compatibility ─────────────────────────────────────────
+
+  PKG_INCOMPATIBLE_PEER: {
+    confidenceScore: 1.0,
+    severity: 'critical',
+    category: 'package',
+    description: 'Package version does not satisfy the required peer dependency range for the target Angular version.',
+    recommendedAction: 'Review the package changelog and upgrade to a version compatible with the target Angular release.',
+  },
+
+  PKG_MAJOR_UPGRADE_REQUIRED: {
+    confidenceScore: 0.85,
+    severity: 'high',
+    category: 'package',
+    description: 'Package requires a major version upgrade to support the target Angular version. A compatible version is available.',
+    recommendedAction: 'Plan a major upgrade of this package as part of the Angular migration.',
+  },
+
+  PKG_UNVERIFIED_COMPAT: {
+    confidenceScore: 0.60,
+    severity: 'medium',
+    category: 'package',
+    description: 'Package compatibility with the target Angular version cannot be verified from available metadata.',
+    recommendedAction: 'Manually verify that this package supports the target Angular version before migrating.',
   },
 };
 

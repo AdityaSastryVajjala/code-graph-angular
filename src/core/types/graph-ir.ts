@@ -96,6 +96,8 @@ export enum RelationshipType {
   FindingGenerates = 'FINDING_GENERATES',
   MigrationOrder = 'MIGRATION_ORDER',
   WorkItemDependsOn = 'WORK_ITEM_DEPENDS_ON',
+  // Phase 5 — file-level dependency graph
+  ImportsFrom = 'IMPORTS_FROM',
 }
 
 // ─── Core GraphIR Types ──────────────────────────────────────────────────────
@@ -118,6 +120,16 @@ export interface GraphRelationship {
 }
 
 /**
+ * Inline template captured during TS extraction.
+ * Passed via GraphIR.meta to the CLI pipeline for template extraction.
+ */
+export interface InlineTemplateInfo {
+  componentNodeId: string;
+  componentFilePath: string;  // relative to appRoot
+  templateSource: string;
+}
+
+/**
  * The primary output of every extractor.
  * sourceFile is relative to the application root.
  */
@@ -125,6 +137,10 @@ export interface GraphIR {
   nodes: GraphNode[];
   relationships: GraphRelationship[];
   sourceFile: string;
+  /** Pipeline-only metadata; not written to the graph directly. */
+  meta?: {
+    inlineTemplates?: InlineTemplateInfo[];
+  };
 }
 
 // ─── Change Detection Types ──────────────────────────────────────────────────

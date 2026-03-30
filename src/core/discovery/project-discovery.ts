@@ -3,8 +3,47 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
-import { resolve, join } from 'path';
+import { resolve, join, dirname } from 'path';
 import { AngularApp } from '../types/graph-ir.js';
+
+/**
+ * Walk up the directory tree from `startDir` to find a package.json
+ * that contains `@angular/core`, then return its coerced semver string.
+ * Returns 'unknown' when no suitable package.json is found.
+ */
+function readAngularVersion(startDir: string): string {
+  let dir = resolve(startDir);
+  const root = dirname(dir); // filesystem root guard
+
+  while (dir !== root) {
+    const pkgPath = join(dir, 'package.json');
+    if (existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as Record<string, unknown>;
+        const deps = {
+          ...(pkg['dependencies'] as Record<string, string> | undefined ?? {}),
+          ...(pkg['devDependencies'] as Record<string, string> | undefined ?? {}),
+        };
+        const raw = deps['@angular/core'];
+        if (raw) {
+          // Strip range prefixes (^, ~, >=, etc.) and return the bare version
+          const match = raw.match(/(\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)?)/);
+          if (match) return match[1];
+          // Fallback: return everything after leading non-digit chars
+          const coerced = raw.replace(/^[^0-9]*/, '');
+          if (coerced) return coerced;
+        }
+      } catch {
+        // malformed package.json — keep walking up
+      }
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break; // reached filesystem root
+    dir = parent;
+  }
+
+  return 'unknown';
+}
 
 interface AngularJsonProject {
   projectType?: string;
@@ -198,7 +237,7 @@ function discoverNxWorkspace(rootPath: string): AngularApp[] {
       name,
       rootPath: appDir,
       sourceRoot: projectJson.sourceRoot ?? 'src',
-      angularVersion: 'unknown',
+      angularVersion: readAngularVersion(appDir),
       isStandaloneBootstrap: false,
     });
   }
@@ -219,7 +258,7 @@ function discoverFromProjectJson(appDir: string): AngularApp {
     name: projectJson.name ?? appDir.split('/').pop() ?? 'app',
     rootPath: appDir,
     sourceRoot: projectJson.sourceRoot ?? 'src',
-    angularVersion: 'unknown',
+    angularVersion: readAngularVersion(appDir),
     isStandaloneBootstrap: false,
   };
 }
@@ -233,7 +272,7 @@ function buildAngularApp(
     name,
     rootPath,
     sourceRoot: project.sourceRoot ?? 'src',
-    angularVersion: 'unknown',
+    angularVersion: readAngularVersion(rootPath),
     isStandaloneBootstrap: false,
   };
 }

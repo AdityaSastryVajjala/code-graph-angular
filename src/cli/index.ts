@@ -8,11 +8,11 @@
 
 import { program } from 'commander';
 import { readFileSync } from 'fs';
-import { resolve, dirname, normalize as normalizePath } from 'path';
+import { resolve, dirname, relative, normalize as normalizePath } from 'path';
 import { discoverApp, discoverWorkspace } from '../core/discovery/project-discovery.js';
 import { collectFiles } from '../core/collection/source-collector.js';
 import { extractTsFile } from '../core/extraction/ts-extractor.js';
-import { extractTemplate } from '../core/extraction/template-extractor.js';
+import { extractTemplate, extractTemplateBindings } from '../core/extraction/template-extractor.js';
 import { extractSpecFile } from '../core/extraction/spec-extractor.js';
 import { normalize, buildSelectorMap } from '../core/normalization/angular-normalizer.js';
 import { fullIndex } from '../graph/importer/bulk-importer.js';
@@ -21,7 +21,7 @@ import { startMcpServer } from '../mcp/server.js';
 import { watch as chokidarWatch } from '../incremental/detectors/chokidar-detector.js';
 import { RollingDebounce } from '../incremental/debounce/rolling-debounce.js';
 import { processChanges } from '../incremental/change-processor.js';
-import { AngularApp, GraphIR } from '../core/types/graph-ir.js';
+import { AngularApp, GraphIR, NodeLabel } from '../core/types/graph-ir.js';
 import { logger } from '../shared/logger.js';
 
 program
@@ -227,13 +227,24 @@ async function indexApp(
         return normalizePath(resolve(componentAbsDir, tmplPath)) === normalizePath(htmlFile);
       });
       if (ownerNode) {
+        const ownerRelPath = ownerNode.properties['filePath'] as string;
+        const componentName = ownerNode.properties['name'] as string;
+        const relHtmlPath = relative(app.rootPath, htmlFile).replace(/\\/g, '/');
+
+        // Selector-level relationships (USES_COMPONENT, USES_DIRECTIVE, etc.)
         irs.push(
-          await extractTemplate(
+          await extractTemplate(source, htmlFile, ownerNode.id, ownerRelPath, selectorMap),
+        );
+
+        // Template node + USES_TEMPLATE edge + binding relationships
+        irs.push(
+          await extractTemplateBindings(
             source,
-            htmlFile,
+            relHtmlPath,
+            ownerRelPath,
+            componentName,
             ownerNode.id,
-            ownerNode.properties['filePath'] as string,
-            selectorMap,
+            new Map(),
           ),
         );
       }
@@ -244,6 +255,49 @@ async function indexApp(
       });
     }
   }
+
+  // Extract inline templates (captured during TS extraction above)
+  const inlineTemplateIrs: typeof irs = [];
+  for (const ir of irs) {
+    if (!ir.meta?.inlineTemplates) continue;
+    for (const info of ir.meta.inlineTemplates) {
+      try {
+        const absoluteComponentPath = resolve(app.rootPath, info.componentFilePath);
+        const ownerNode = preNorm.nodes.find((n) => n.id === info.componentNodeId);
+        const componentName = (ownerNode?.properties['name'] as string | undefined)
+          ?? info.componentNodeId;
+
+        // Selector-level relationships
+        inlineTemplateIrs.push(
+          await extractTemplate(
+            info.templateSource,
+            absoluteComponentPath,
+            info.componentNodeId,
+            info.componentFilePath,
+            selectorMap,
+          ),
+        );
+
+        // Template node + USES_TEMPLATE edge (inline: templateUrl = component .ts relPath)
+        inlineTemplateIrs.push(
+          await extractTemplateBindings(
+            info.templateSource,
+            info.componentFilePath,
+            info.componentFilePath,
+            componentName,
+            info.componentNodeId,
+            new Map(),
+          ),
+        );
+      } catch (err) {
+        logger.warn('inline_template_extract_error', {
+          filePath: info.componentFilePath,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+  irs.push(...inlineTemplateIrs);
 
   // Extract spec files
   for (const specFile of fileSet.specFiles) {
@@ -260,6 +314,21 @@ async function indexApp(
 
   // Normalize all IRs into a single graph
   const finalIr = normalize(irs);
+
+  // Inject an Application root node so migration analyzers can read angularVersion
+  const appNodeId = `app::${app.name}`;
+  if (!finalIr.nodes.some((n) => n.id === appNodeId)) {
+    finalIr.nodes.push({
+      id: appNodeId,
+      label: NodeLabel.Application,
+      properties: {
+        id: appNodeId,
+        name: app.name,
+        rootPath: app.rootPath,
+        angularVersion: app.angularVersion,
+      },
+    });
+  }
 
   // Index into Neo4j
   const stats = await fullIndex(driver, app, finalIr, app.rootPath);

@@ -10,6 +10,7 @@
  */
 
 import { Session } from 'neo4j-driver';
+import { readFileSync } from 'fs';
 import { FindingNode } from '../../graph/schema/nodes.js';
 import { buildFinding } from '../finding-builder.js';
 
@@ -29,6 +30,7 @@ export class TemplateModerizationAnalyzer {
     await this.detectNgModelWithoutFormsModule(findings);
     await this.detectPipeMissingImport(findings);
     await this.detectAsyncWithoutOnPush(findings);
+    await this.detectOldStructuralDirectives(findings);
 
     return { findings };
   }
@@ -94,6 +96,86 @@ export class TemplateModerizationAnalyzer {
         }));
       } catch {
         // noop
+      }
+    }
+  }
+
+  /**
+   * Legacy structural directive syntax (*ngIf, *ngFor, *ngSwitch).
+   * Scans the content of HTML File nodes from the graph.
+   * For inline templates, the component node is used as the affected node.
+   */
+  private async detectOldStructuralDirectives(findings: FindingNode[]): Promise<void> {
+    const OLD_DIRECTIVE_PATTERN = /\*ng(If|For|Switch)\b/;
+
+    // Fetch HTML files from graph
+    const htmlResult = await this.session.run(
+      `MATCH (f:File) WHERE f.fileType = 'html' RETURN f.id AS id, f.filePath AS filePath`,
+    );
+
+    for (const record of htmlResult.records) {
+      const fileId = record.get('id') as string;
+      const filePath = record.get('filePath') as string;
+
+      let source: string;
+      try {
+        source = readFileSync(filePath, 'utf-8');
+      } catch {
+        continue;
+      }
+
+      if (OLD_DIRECTIVE_PATTERN.test(source)) {
+        const scope: 'production' | 'test' = filePath?.includes('.spec.') ? 'test' : 'production';
+        try {
+          const finding = buildFinding({
+            affectedNodeId: fileId,
+            reasonCode: 'TMPL_OLD_STRUCTURAL_DIRECTIVE',
+            scope,
+            migrationRunId: this.migrationRunId,
+            type: 'opportunity',
+          });
+          if (!findings.some((f) => f.id === finding.id)) {
+            findings.push(finding);
+          }
+        } catch {
+          // noop
+        }
+      }
+    }
+
+    // Also check components with inline templates (templateType = 'inline')
+    const inlineResult = await this.session.run(
+      `MATCH (t:Template { templateType: 'inline' })-[:USES_TEMPLATE]-(c:Component)
+       RETURN DISTINCT c.id AS id, c.filePath AS filePath, t.sourceFile AS sourceFile`,
+    );
+
+    for (const record of inlineResult.records) {
+      const componentId = record.get('id') as string;
+      const filePath = (record.get('filePath') ?? record.get('sourceFile')) as string;
+
+      let source: string;
+      try {
+        source = readFileSync(filePath, 'utf-8');
+      } catch {
+        continue;
+      }
+
+      if (OLD_DIRECTIVE_PATTERN.test(source)) {
+        const scope: 'production' | 'test' = filePath?.includes('.spec.') ? 'test' : 'production';
+        try {
+          const finding = buildFinding({
+            affectedNodeId: componentId,
+            reasonCode: 'TMPL_OLD_STRUCTURAL_DIRECTIVE',
+            scope,
+            migrationRunId: this.migrationRunId,
+            type: 'opportunity',
+          });
+          if (!findings.some((f) => f.id === finding.id)) {
+            findings.push(finding);
+          }
+        } catch {
+          // noop
+        }
       }
     }
   }

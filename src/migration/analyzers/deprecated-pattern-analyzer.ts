@@ -40,6 +40,7 @@ export class DeprecatedPatternAnalyzer {
     await this.detectClassBasedResolvers(findings);
     await this.detectChangeDetectionDefault(findings);
     await this.detectSubscriptionLeaks(findings);
+    await this.detectSubjectBus(findings);
   }
 
   private async detectClassBasedGuards(findings: FindingNode[]): Promise<void> {
@@ -116,6 +117,27 @@ export class DeprecatedPatternAnalyzer {
     }
   }
 
+  /** Service with a Subject property injected in 2+ consumers — event-bus anti-pattern. */
+  private async detectSubjectBus(findings: FindingNode[]): Promise<void> {
+    const result = await this.session.run(
+      `MATCH (s:Service)-[:HAS_PROPERTY]->(p:Property)
+       WHERE p.type CONTAINS 'Subject'
+       WITH s, count(p) AS subjectCount
+       WHERE subjectCount > 0
+       MATCH (consumer)-[:INJECTS]->(s)
+       WITH s, count(DISTINCT consumer) AS consumerCount
+       WHERE consumerCount >= 2
+       RETURN s.id AS id, s.filePath AS filePath`,
+    );
+
+    for (const record of result.records) {
+      const id = record.get('id') as string;
+      const filePath = record.get('filePath') as string;
+      const scope: 'production' | 'test' = filePath?.includes('.spec.') ? 'test' : 'production';
+      this.pushFinding(findings, id, 'RXJS_SUBJECT_BUS', scope, 'risk');
+    }
+  }
+
   // ─── AST-based detection ──────────────────────────────────────────────────
 
   private async detectAstBasedPatterns(findings: FindingNode[]): Promise<void> {
@@ -163,6 +185,16 @@ export class DeprecatedPatternAnalyzer {
     });
   }
 
+  // RxJS 5/6 operators that were chainable before pipe() was introduced
+  private static readonly RXJS_CHAINABLE_OPERATORS = new Set([
+    'map', 'filter', 'switchMap', 'mergeMap', 'flatMap', 'concatMap', 'exhaustMap',
+    'debounceTime', 'throttleTime', 'distinctUntilChanged', 'take', 'takeUntil',
+    'catchError', 'retry', 'retryWhen', 'delay', 'share', 'shareReplay',
+    'combineLatest', 'withLatestFrom', 'zip', 'startWith', 'scan', 'reduce',
+    'tap', 'do', 'pluck', 'mapTo', 'pairwise', 'skip', 'skipUntil', 'takeWhile',
+    'bufferTime', 'bufferCount', 'windowTime', 'groupBy', 'toArray',
+  ]);
+
   private scanCallExpressions(
     sourceFile: ts.SourceFile,
     fileId: string,
@@ -194,6 +226,24 @@ export class DeprecatedPatternAnalyzer {
             expr.expression.text === 'ComponentFactoryResolver'))
         ) {
           this.pushFinding(findings, fileId, 'ANG_COMPONENT_FACTORY', scope, 'risk');
+        }
+
+        // RXJS_NON_PIPEABLE: operator called as method on another call expression
+        // e.g. observable.map(...).filter(...) — chaining without .pipe()
+        if (
+          ts.isPropertyAccessExpression(expr) &&
+          DeprecatedPatternAnalyzer.RXJS_CHAINABLE_OPERATORS.has(expr.name.text) &&
+          ts.isCallExpression(expr.expression)
+        ) {
+          // Make sure it's not inside a .pipe() call (the immediate parent method is not 'pipe')
+          const receiver = expr.expression;
+          const receiverExpr = receiver.expression;
+          if (
+            !ts.isPropertyAccessExpression(receiverExpr) ||
+            receiverExpr.name.text !== 'pipe'
+          ) {
+            this.pushFinding(findings, fileId, 'RXJS_NON_PIPEABLE', scope, 'risk');
+          }
         }
       }
 

@@ -50,4 +50,6 @@ export const RELATIONSHIP_TYPES: Record<RelationshipType, string> = {
   [RelationshipType.FindingGenerates]: 'FINDING_GENERATES',
   [RelationshipType.MigrationOrder]: 'MIGRATION_ORDER',
   [RelationshipType.WorkItemDependsOn]: 'WORK_ITEM_DEPENDS_ON',
+  // Phase 5 — file-level dependency graph
+  [RelationshipType.ImportsFrom]: 'IMPORTS_FROM',
 };

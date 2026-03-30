@@ -36,6 +36,8 @@ import { getMigrationFindings } from './tools/get-migration-findings.js';
 import { getMigrationOrder } from './tools/get-migration-order.js';
 import { getDeprecatedPatterns } from './tools/get-deprecated-patterns.js';
 import { getMigrationSummary } from './tools/get-migration-summary.js';
+import { getPackageCompatibility } from './tools/get-package-compatibility.js';
+import { getMigrationTasks } from './tools/get-migration-tasks.js';
 import { logger } from '../shared/logger.js';
 
 // ─── Pagination Helpers ───────────────────────────────────────────────────────
@@ -455,6 +457,37 @@ const TOOL_DEFINITIONS = [
       required: ['appDb'],
     },
   },
+  // Phase 5 — package compatibility
+  {
+    name: 'get_package_compatibility',
+    description: 'Return package compatibility findings grouped as blockers and risks. Supports filtering by severity and target Angular version.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appDb: { type: 'string', description: 'Target application database name' },
+        severity: { type: 'string', enum: ['blocker', 'risk'], description: 'Filter by severity class' },
+        targetAngularVersion: { type: 'string', description: 'Filter by target Angular major version (e.g. "17")' },
+        pageSize: { type: 'number', default: 50, description: 'Items per page (max 200)' },
+        cursor: { type: 'string', description: 'Pagination cursor from previous response' },
+      },
+      required: ['appDb'],
+    },
+  },
+  // Phase 5 — topological migration task ordering
+  {
+    name: 'get_migration_tasks',
+    description: 'Returns dependency-safe migration task batches ordered via Kahn\'s algorithm. All tasks in a batch can run in parallel; each batch must complete before the next begins.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appDb: { type: 'string', description: 'Target application database name' },
+        migrationRunId: { type: 'string', description: 'Filter to a specific migration run ID' },
+        findingType: { type: 'string', enum: ['blocker', 'risk', 'opportunity'], description: 'Filter by finding type' },
+        limit: { type: 'number', default: 200, description: 'Maximum total tasks to return (max 500)' },
+      },
+      required: ['appDb'],
+    },
+  },
 ];
 
 // ─── Server Bootstrap ─────────────────────────────────────────────────────────
@@ -551,6 +584,13 @@ export async function startMcpServer(driver: Driver): Promise<void> {
           break;
         case 'get_migration_summary':
           result = await getMigrationSummary(driver, input);
+          break;
+        // Phase 5 — package compatibility
+        case 'get_package_compatibility':
+          result = await getPackageCompatibility(driver, input);
+          break;
+        case 'get_migration_tasks':
+          result = await getMigrationTasks(driver, input);
           break;
         default:
           return {

@@ -163,7 +163,7 @@ export interface ProjectNode {
 export interface FindingNode {
   id: string;                               // SHA-256 prefix: {affectedNodeId}::{reasonCode}::{scope}
   type: 'blocker' | 'risk' | 'opportunity';
-  category: 'angular' | 'rxjs' | 'template' | 'architecture';
+  category: 'angular' | 'rxjs' | 'template' | 'architecture' | 'package';
   severity: 'low' | 'medium' | 'high' | 'critical';
   affectedNodeId: string;
   reasonCode: string;
@@ -173,6 +173,11 @@ export interface FindingNode {
   scope: 'production' | 'test';
   isDeprecatedUsage?: boolean;
   migrationRunId: string;
+  // Phase 5 — package compatibility findings only
+  packageName?: string;           // e.g. "@ngrx/store"
+  installedVersion?: string;      // e.g. "14.3.0"
+  requiredVersion?: string;       // e.g. ">=17.0.0"
+  targetAngularVersion?: string;  // Angular major version evaluated against, e.g. "17"
 }
 
 export interface WorkItemSeedNode {

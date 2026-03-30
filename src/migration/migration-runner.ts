@@ -22,6 +22,7 @@ import { DeprecatedPatternAnalyzer } from './analyzers/deprecated-pattern-analyz
 import { TemplateModerizationAnalyzer } from './analyzers/template-modernization-analyzer.js';
 import { NgModuleComplexityAnalyzer } from './analyzers/ngmodule-complexity-analyzer.js';
 import { MigrationOrderAnalyzer } from './analyzers/migration-order-analyzer.js';
+import { PackageCompatibilityAnalyzer } from './analyzers/package-compatibility-analyzer.js';
 
 export interface MigrationRunResult {
   migrationRunId: string;
@@ -48,6 +49,12 @@ export interface MigrationRunnerOptions {
   targetAngularVersion?: string;
   /** Optional: absolute path to write JSON export (FR-022) */
   outputPath?: string;
+  /**
+   * Optional: absolute path to the workspace root directory containing package.json.
+   * When provided, Step 0 package compatibility analysis runs before all other steps.
+   * When absent, the package compatibility step is skipped gracefully.
+   */
+  workspaceRootPath?: string;
 }
 
 export class MigrationRunner {
@@ -68,8 +75,11 @@ export class MigrationRunner {
       // Verify the database has been indexed
       await this.verifyDatabaseExists(session, appDb);
 
-      // Read the Angular version recorded on the ApplicationNode
-      const currentAngularVersion = await this.readCurrentAngularVersion(session);
+      // Read the Angular version and workspace root path from the ApplicationNode
+      const { angularVersion: currentAngularVersion, rootPath: discoveredRoot } = await this.readApplicationInfo(session);
+
+      // Resolve workspaceRootPath: explicit option wins, then discovered from graph
+      const workspaceRootPath = options.workspaceRootPath ?? discoveredRoot;
 
       process.stdout.write(
         `[migrate] Angular version: ${currentAngularVersion} → target: ${targetAngularVersion}\n`,
@@ -78,9 +88,27 @@ export class MigrationRunner {
       // Step 1: Clear all previous migration findings and enriched properties
       await this.clearPreviousFindings(session);
 
-      // Step 2: Run all analyzers
+      // Step 0: Package compatibility analysis (runs before all other steps)
       const allFindings: FindingNode[] = [];
 
+      if (workspaceRootPath) {
+        process.stdout.write('[migrate] Step 0: Package compatibility analysis...');
+        const t0 = Date.now();
+        const pkgAnalyzer = new PackageCompatibilityAnalyzer(this.driver, appDb);
+        const pkgResult = await pkgAnalyzer.analyze(
+          workspaceRootPath,
+          targetAngularVersion,
+          migrationRunId,
+        );
+        allFindings.push(...pkgResult.findings);
+        process.stdout.write(
+          `  [done in ${Date.now() - t0}ms, ` +
+          `${pkgResult.packagesAnalyzed} packages analyzed, ` +
+          `${pkgResult.blockersFound} blockers, ${pkgResult.risksFound} risks]\n`,
+        );
+      }
+
+      // Step 2: Run all analyzers
       // Standalone candidate analysis
       process.stdout.write('[migrate] Analyzing standalone candidates...');
       const t1 = Date.now();
@@ -302,15 +330,19 @@ export class MigrationRunner {
   }
 
   /**
-   * Reads the Angular version stored on the ApplicationNode in Neo4j.
-   * Falls back to 'unknown' if no Application node is present.
+   * Reads the Angular version and workspace root path stored on the ApplicationNode in Neo4j.
+   * Falls back to 'unknown' / undefined if no Application node is present.
    */
-  private async readCurrentAngularVersion(session: Session): Promise<string> {
+  private async readApplicationInfo(session: Session): Promise<{ angularVersion: string; rootPath: string | undefined }> {
     const result = await session.run(
-      'MATCH (a:Application) RETURN a.angularVersion AS v LIMIT 1',
+      'MATCH (a:Application) RETURN a.angularVersion AS v, a.rootPath AS rootPath LIMIT 1',
     );
     const v = result.records[0]?.get('v');
-    return typeof v === 'string' && v.length > 0 ? v : 'unknown';
+    const rootPath = result.records[0]?.get('rootPath');
+    return {
+      angularVersion: typeof v === 'string' && v.length > 0 ? v : 'unknown',
+      rootPath: typeof rootPath === 'string' && rootPath.length > 0 ? rootPath : undefined,
+    };
   }
 
   /**
