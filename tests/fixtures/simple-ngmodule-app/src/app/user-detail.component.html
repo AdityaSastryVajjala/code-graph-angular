@@ -1,0 +1,9 @@
+<!-- Phase 2 fixture: template with interpolation, property binding, event binding, two-way binding -->
+<div class="user-detail">
+  <h2>{{ getDisplayName() }}</h2>
+  <p>{{ name }}</p>
+  <p>{{ email }}</p>
+  <button [disabled]="isLoading" (click)="onSave()">Save</button>
+  <input [(ngModel)]="name" placeholder="Name" />
+  <span [class.loading]="isLoading">Loading...</span>
+</div>

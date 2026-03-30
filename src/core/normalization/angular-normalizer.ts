@@ -106,6 +106,7 @@ export function normalize(irs: GraphIR[]): GraphIR {
   }
 
   // Resolve pending relationships and drop unresolvable ones.
+  const nodeIdSet = new Set(nodeMap.keys());
   const resolvedRelMap = new Map<string, GraphRelationship>();
   for (const rel of relMap.values()) {
     if (rel.pendingTargetName) {
@@ -114,6 +115,10 @@ export function normalize(irs: GraphIR[]): GraphIR {
       const { pendingTargetName: _, ...rest } = rel;
       resolvedRelMap.set(rest.id, { ...rest, toId: resolvedId });
     } else {
+      // Drop relationships pointing to nodes not present in this graph.
+      // This handles cases where toId was computed speculatively (e.g. CALLS_METHOD
+      // targeting a same-class method that is inherited or not yet extracted).
+      if (!nodeIdSet.has(rel.toId)) continue;
       resolvedRelMap.set(rel.id, rel);
     }
   }

@@ -1,0 +1,41 @@
+{
+  "$schema": "./node_modules/@angular/cli/lib/config/schema.json",
+  "version": 1,
+  "projects": {
+    "shell": {
+      "projectType": "application",
+      "sourceRoot": "apps/shell/src",
+      "root": "apps/shell",
+      "architect": {
+        "build": {
+          "builder": "@angular-devkit/build-angular:browser",
+          "options": {
+            "outputPath": "dist/apps/shell",
+            "main": "apps/shell/src/main.ts",
+            "tsConfig": "apps/shell/tsconfig.app.json"
+          }
+        }
+      }
+    },
+    "shared-ui": {
+      "projectType": "library",
+      "sourceRoot": "libs/shared-ui/src/lib",
+      "root": "libs/shared-ui",
+      "architect": {
+        "build": {
+          "builder": "@angular-devkit/build-angular:ng-packagr"
+        }
+      }
+    },
+    "data-access": {
+      "projectType": "library",
+      "sourceRoot": "libs/data-access/src/lib",
+      "root": "libs/data-access",
+      "architect": {
+        "build": {
+          "builder": "@angular-devkit/build-angular:ng-packagr"
+        }
+      }
+    }
+  }
+}

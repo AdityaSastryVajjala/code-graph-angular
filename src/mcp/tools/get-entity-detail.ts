@@ -13,7 +13,7 @@ import {
   nodeToRouteSummary,
 } from '../cypher-helpers.js';
 
-type EntityType = 'Component' | 'Service' | 'NgModule' | 'Directive' | 'Pipe' | 'Route';
+type EntityType = 'Component' | 'Service' | 'NgModule' | 'Directive' | 'Pipe' | 'Route' | 'Class';
 
 export async function getEntityDetail(
   driver: Driver,
@@ -38,6 +38,25 @@ export async function getEntityDetail(
 
     switch (entityType) {
       case 'Component': {
+        // Phase 2: methods, properties, template binding count, test coverage
+        const classResult = await session.run(
+          'MATCH (cls:Class) WHERE cls.sourceFile = (MATCH (c:Component {id: $id}) RETURN c.filePath LIMIT 1) AND cls.name = (MATCH (c:Component {id: $id}) RETURN c.name LIMIT 1) RETURN cls LIMIT 1',
+          { id: entityId },
+        );
+        const methodsResult = await session.run(
+          'MATCH (c:Component {id: $id})<-[:BELONGS_TO_FILE]-(f:File)<-[:DECLARES_SYMBOL]-(cls:Class)-[:HAS_METHOD]->(m:Method) RETURN m ORDER BY m.name',
+          { id: entityId },
+        );
+        const propsResult = await session.run(
+          'MATCH (c:Component {id: $id})<-[:BELONGS_TO_FILE]-(f:File)<-[:DECLARES_SYMBOL]-(cls:Class)-[:HAS_PROPERTY]->(p:Property) RETURN p ORDER BY p.name',
+          { id: entityId },
+        );
+        const bindingCountResult = await session.run(
+          'MATCH (c:Component {id: $id})-[:USES_TEMPLATE]->(t:Template)-[:BINDS_TO]->() RETURN count(*) AS bindingCount',
+          { id: entityId },
+        );
+        void classResult; // reserved for future use
+
         // Enrich with related nodes
         const svcResult = await session.run(
           'MATCH (c:Component {id: $id})-[:INJECTS]->(s:Service) RETURN s',
@@ -68,6 +87,11 @@ export async function getEntityDetail(
           { id: entityId },
         );
 
+        const bindingCountRaw = bindingCountResult.records[0]?.get('bindingCount');
+        const bindingCount = typeof bindingCountRaw === 'object' && bindingCountRaw?.toNumber
+          ? bindingCountRaw.toNumber()
+          : Number(bindingCountRaw ?? 0);
+
         return {
           ...nodeToComponentSummary(props),
           templateType: props['templateType'],
@@ -83,6 +107,16 @@ export async function getEntityDetail(
             ? nodeToNgModuleSummary(modResult.records[0].get('m').properties)
             : null,
           specFiles: specResult.records.map((r) => r.get('spec').properties['filePath']),
+          // Phase 2 additions
+          methods: methodsResult.records.map((r) => {
+            const p = r.get('m').properties as Record<string, unknown>;
+            return { name: p['name'], isPublic: p['isPublic'], returnType: p['returnType'] ?? null };
+          }),
+          properties: propsResult.records.map((r) => {
+            const p = r.get('p').properties as Record<string, unknown>;
+            return { name: p['name'], isPublic: p['isPublic'], type: p['type'] ?? null, isInput: p['isInput'], isOutput: p['isOutput'] };
+          }),
+          templateBindingCount: bindingCount,
         };
       }
 
@@ -147,6 +181,42 @@ export async function getEntityDetail(
           }),
           bootstrap: bootResult.records.map((r) => nodeToComponentSummary(r.get('c').properties)),
           providers: prvResult.records.map((r) => nodeToServiceSummary(r.get('s').properties)),
+        };
+      }
+
+      case 'Class': {
+        const methodsR = await session.run(
+          'MATCH (c:Class {id: $id})-[:HAS_METHOD]->(m:Method) RETURN m ORDER BY m.name',
+          { id: entityId },
+        );
+        const propsR = await session.run(
+          'MATCH (c:Class {id: $id})-[:HAS_PROPERTY]->(p:Property) RETURN p ORDER BY p.name',
+          { id: entityId },
+        );
+        const testsR = await session.run(
+          'MATCH (spec:SpecFile)-[r:TESTS]->(c:Class {id: $id}) RETURN spec.filePath AS fp, r.via AS via',
+          { id: entityId },
+        );
+        const consumersR = await session.run(
+          'MATCH (consumer)-[:INJECTS]->(c:Class {id: $id}) RETURN consumer.name AS name, labels(consumer) AS lbls',
+          { id: entityId },
+        );
+        return {
+          id: props['id'],
+          name: props['name'],
+          sourceFile: props['sourceFile'],
+          isAbstract: props['isAbstract'],
+          isExported: props['isExported'],
+          methods: methodsR.records.map((r) => {
+            const p = r.get('m').properties as Record<string, unknown>;
+            return { name: p['name'], isPublic: p['isPublic'], returnType: p['returnType'] ?? null };
+          }),
+          properties: propsR.records.map((r) => {
+            const p = r.get('p').properties as Record<string, unknown>;
+            return { name: p['name'], isPublic: p['isPublic'], type: p['type'] ?? null, isInput: p['isInput'], isOutput: p['isOutput'] };
+          }),
+          specFiles: testsR.records.map((r) => ({ filePath: r.get('fp'), via: r.get('via') })),
+          diConsumerCount: consumersR.records.length,
         };
       }
 
